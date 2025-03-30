@@ -1,0 +1,151 @@
+# Environment Variables and Secrets
+.env
+.env.*
+.env.local
+.env.development
+.env.test
+.env.production
+*.env
+*/config/secrets.yml
+
+# API Keys and Security Files
+**/api_keys.json
+**/secrets.json
+**/credentials.json
+**/auth.json
+*secret*
+*password*
+*credential*
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase-credentials.json
+**/firebaseConfig.js
+**/serviceAccountKey.json
+
+# JWT and Certificate Files
+*.pem
+*.key
+*.cert
+*.crt
+**/jwt*.json
+*jwt_secret*
+
+# Local Configuration
+.config/
+config.json
+**/config.js
+**/config.ts
+**/settings.json
+**/settings.js
+**/settings.ts
+
+# Database Files
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+dump.rdb
+
+# Logs and Debug Information
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+debug.log
+
+# Dependencies
+node_modules/
+.pnp/
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+package-lock.json
+yarn.lock
+*/venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Build Outputs
+dist/
+build/
+.next/
+out/
+
+# Cache Files
+.cache/
+.eslintcache
+.stylelintcache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints
+.webpack/
+.serverless/
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE and Editor Files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Test Coverage
+coverage/
+.nyc_output
+
+# Misc
+.vercel
+.netlify
+.serverless/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.turbo
+*.tsbuildinfo
+
+# Backup Files
+*.bak
+*.backup
+*~
+*.swp
+*.swo
+
+# Docker
+.dockerignore
+
+# Certificates
+certbot/ 

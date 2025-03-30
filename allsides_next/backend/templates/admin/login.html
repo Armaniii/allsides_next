@@ -1,0 +1,118 @@
+{% extends "admin/login.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    /* Add custom styles if needed */
+    .login .form-row {
+        padding: 8px;
+    }
+</style>
+{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<!-- Login form port handling script -->
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log("Admin login port preservation activated");
+        
+        // Current URL and host information
+        const currentProto = window.location.protocol;
+        const currentHost = window.location.hostname;
+        const currentPort = window.location.port || (currentProto === 'https:' ? '443' : '80');
+        const currentUrl = window.location.href;
+        
+        console.log(`Current URL: ${currentUrl}`);
+        console.log(`Current host: ${currentHost}`);
+        console.log(`Current port: ${currentPort}`);
+        
+        // Get the login form
+        const loginForm = document.getElementById('login-form');
+        if (loginForm) {
+            console.log("Found login form");
+            
+            // Get the current form action
+            let formAction = loginForm.getAttribute('action') || '';
+            console.log(`Original form action: ${formAction}`);
+            
+            // If the action is relative, make it absolute with port
+            if (formAction.startsWith('/')) {
+                const newAction = `${currentProto}//${currentHost}:${currentPort}${formAction}`;
+                console.log(`Converting relative form action to: ${newAction}`);
+                loginForm.setAttribute('action', newAction);
+            } 
+            // If action is absolute but missing port
+            else if (formAction.startsWith('http')) {
+                const actionUrl = new URL(formAction);
+                if (actionUrl.hostname === currentHost && !actionUrl.port && 
+                    currentPort !== '80' && currentPort !== '443') {
+                    actionUrl.port = currentPort;
+                    console.log(`Adding port to absolute form action: ${actionUrl.toString()}`);
+                    loginForm.setAttribute('action', actionUrl.toString());
+                }
+            }
+            
+            // Add hidden fields with server information
+            const portInput = document.createElement('input');
+            portInput.type = 'hidden';
+            portInput.name = 'server_port';
+            portInput.value = currentPort;
+            loginForm.appendChild(portInput);
+            console.log(`Added hidden input for server_port=${currentPort}`);
+            
+            const hostInput = document.createElement('input');
+            hostInput.type = 'hidden';
+            hostInput.name = 'server_host';
+            hostInput.value = currentHost;
+            loginForm.appendChild(hostInput);
+            console.log(`Added hidden input for server_host=${currentHost}`);
+            
+            const urlInput = document.createElement('input');
+            urlInput.type = 'hidden';
+            urlInput.name = 'current_url';
+            urlInput.value = currentUrl;
+            loginForm.appendChild(urlInput);
+            console.log(`Added hidden input for current_url=${currentUrl}`);
+            
+            // Add submit handler specifically for login form
+            loginForm.addEventListener('submit', function(e) {
+                console.log("Login form submitted");
+                
+                // Get the updated action
+                const formAction = loginForm.getAttribute('action');
+                console.log(`Form action at submission: ${formAction}`);
+                
+                // If still missing port, add it one last time
+                if (formAction.startsWith('http')) {
+                    const actionUrl = new URL(formAction);
+                    if (actionUrl.hostname === currentHost && !actionUrl.port && 
+                        currentPort !== '80' && currentPort !== '443') {
+                        e.preventDefault();
+                        actionUrl.port = currentPort;
+                        loginForm.setAttribute('action', actionUrl.toString());
+                        console.log(`Last-minute port fix before submit: ${actionUrl.toString()}`);
+                        setTimeout(() => loginForm.submit(), 0);
+                    }
+                }
+            });
+        } else {
+            console.error("Login form not found");
+        }
+    });
+</script>
+{% endblock %}
+
+{% block content %}
+{{ block.super }}
+<script>
+    // Additional script to log login related information
+    console.log("Login content block loaded");
+    
+    // If there was a login error, log it
+    const errorList = document.querySelector('.errornote');
+    if (errorList) {
+        console.log("Login error detected:", errorList.textContent);
+    }
+</script>
+{% endblock %} 

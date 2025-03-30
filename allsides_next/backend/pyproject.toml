@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "allsides-backend"
+version = "0.1.0"
+description = "AllSides Backend API"
+authors = ["Your Name <your.email@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+django = "4.2.17"
+djangorestframework = "3.15.2"
+djangorestframework-simplejwt = "5.4.0"
+django-cors-headers = "4.6.0"
+psycopg2-binary = "2.9.10"
+gunicorn = "^21.2.0"
+python-dotenv = "1.0.1"
+openai = "1.59.7"
+fastapi = "0.115.6"
+instructor = "1.7.2"
+pydantic = "2.10.5"
+agenta = "0.31.0"
+langfuse = "2.57.10"
+opentelemetry-instrumentation-openai = "0.36.0"
+opentelemetry-api = "1.29.0"
+opentelemetry-sdk = "1.29.0"
+opentelemetry-exporter-otlp = "1.29.0"
+opentelemetry-instrumentation = "0.50b0"
+opentelemetry-semantic-conventions = "0.50b0"
+redis = "5.2.1"
+django-redis = "5.4.0"
+aioredis = "2.0.1"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+black = "^23.11.0"
+flake8 = "^6.1.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api" 

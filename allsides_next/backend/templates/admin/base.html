@@ -1,0 +1,187 @@
+{% extends "admin/base.html" %}
+
+{% block extrahead %}
+{{ block.super }}
+<script>
+// Port-preserving script for all admin pages
+(function() {
+    console.log('Admin base template loaded - port preservation active');
+    
+    // Function to fix URLs to include port
+    function fixUrlPort(url) {
+        // Avoid logging too much - causing console flooding
+        // console.log("Fixing URL: ", url);
+        
+        // Current protocol, host, and port
+        const currentProto = window.location.protocol;
+        const currentHost = window.location.hostname;
+        const currentPort = window.location.port || (currentProto === 'https:' ? '443' : '80');
+        
+        // Don't modify URLs that are not HTTP/HTTPS or are external
+        if (!url || (url.startsWith('http') && !url.includes(currentHost))) {
+            return url;
+        }
+        
+        // For relative URLs, convert to absolute with port
+        if (url.startsWith('/')) {
+            return `${currentProto}//${currentHost}:${currentPort}${url}`;
+        }
+        
+        // For absolute URLs without port, add the port
+        if (url.startsWith('http')) {
+            // Parse the URL
+            const urlObj = new URL(url);
+            // Only modify if it's our domain and doesn't have a port
+            if (urlObj.hostname === currentHost && !urlObj.port && currentPort !== '80' && currentPort !== '443') {
+                urlObj.port = currentPort;
+                return urlObj.toString();
+            }
+        }
+        
+        return url;
+    }
+    
+    // Fix all links on the page
+    function fixAllLinks() {
+        const links = document.querySelectorAll('a[href]:not([data-port-fixed="true"])');
+        links.forEach(link => {
+            const originalHref = link.getAttribute('href');
+            
+            // Skip anchor links and already processed links
+            if (originalHref.startsWith('#') || link.hasAttribute('data-port-fixed')) {
+                return;
+            }
+            
+            const newHref = fixUrlPort(originalHref);
+            if (originalHref !== newHref) {
+                // console.log(`Modified link from ${originalHref} to ${newHref}`);
+                link.setAttribute('href', newHref);
+            }
+            
+            // Mark this link as processed to avoid infinite loops
+            link.setAttribute('data-port-fixed', 'true');
+            
+            // Add click handler to ensure port preservation
+            link.addEventListener('click', function(e) {
+                // Only handle links that need port preservation
+                if (link.getAttribute('href').startsWith('/') || 
+                    (link.getAttribute('href').startsWith('http') && link.getAttribute('href').includes(window.location.hostname))) {
+                    e.preventDefault();
+                    const fixedHref = fixUrlPort(link.getAttribute('href'));
+                    // console.log(`Navigating to: ${fixedHref}`);
+                    window.location.href = fixedHref;
+                }
+            }, {once: true}); // Only attach this handler once
+        });
+    }
+    
+    // Fix all forms on the page
+    function fixAllForms() {
+        const forms = document.querySelectorAll('form:not([data-port-fixed="true"])');
+        forms.forEach(form => {
+            // Skip already processed forms
+            if (form.hasAttribute('data-port-fixed')) {
+                return;
+            }
+            
+            const originalAction = form.getAttribute('action');
+            // Only fix if it has an action attribute
+            if (originalAction) {
+                const newAction = fixUrlPort(originalAction);
+                if (originalAction !== newAction) {
+                    // console.log(`Modified form action from ${originalAction} to ${newAction}`);
+                    form.setAttribute('action', newAction);
+                }
+            }
+            
+            // Mark this form as processed to avoid infinite loops
+            form.setAttribute('data-port-fixed', 'true');
+            
+            // Add hidden inputs for port and host if not already present
+            if (!form.querySelector('input[name="server_port"]')) {
+                const portInput = document.createElement('input');
+                portInput.type = 'hidden';
+                portInput.name = 'server_port';
+                portInput.value = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+                form.appendChild(portInput);
+            }
+            
+            if (!form.querySelector('input[name="server_host"]')) {
+                const hostInput = document.createElement('input');
+                hostInput.type = 'hidden';
+                hostInput.name = 'server_host';
+                hostInput.value = window.location.hostname;
+                form.appendChild(hostInput);
+            }
+            
+            // Add submit handler
+            form.addEventListener('submit', function(e) {
+                // Don't prevent default, just ensure action has port
+                const currentAction = form.getAttribute('action');
+                const fixedAction = fixUrlPort(currentAction);
+                if (currentAction !== fixedAction) {
+                    // console.log(`Form submission: changing action from ${currentAction} to ${fixedAction}`);
+                    form.setAttribute('action', fixedAction);
+                }
+            }, {once: true}); // Only attach this handler once
+        });
+    }
+    
+    // Track if we're currently processing mutations to avoid infinite loops
+    let processingMutations = false;
+    
+    // Run when DOM is loaded
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log("Port preservation script activated for admin");
+        fixAllLinks();
+        fixAllForms();
+        
+        // Setup MutationObserver to handle dynamically added content
+        const observer = new MutationObserver(function(mutations) {
+            // Prevent recursive calls
+            if (processingMutations) return;
+            
+            processingMutations = true;
+            
+            try {
+                // Check if any mutations added new elements that need fixing
+                let needsFixing = false;
+                mutations.forEach(function(mutation) {
+                    if (mutation.addedNodes.length) {
+                        // Check if any added nodes contain links or forms that need fixing
+                        for (let i = 0; i < mutation.addedNodes.length; i++) {
+                            const node = mutation.addedNodes[i];
+                            if (node.nodeType === Node.ELEMENT_NODE) {
+                                const unfixedLinks = node.querySelectorAll?.('a[href]:not([data-port-fixed="true"])');
+                                const unfixedForms = node.querySelectorAll?.('form:not([data-port-fixed="true"])');
+                                if ((unfixedLinks && unfixedLinks.length > 0) || 
+                                    (unfixedForms && unfixedForms.length > 0)) {
+                                    needsFixing = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                if (needsFixing) {
+                    // console.log("New unfixed elements detected, fixing links and forms");
+                    fixAllLinks();
+                    fixAllForms();
+                }
+            } finally {
+                processingMutations = false;
+            }
+        });
+        
+        // Start observing with a more specific configuration
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: false,  // Don't observe attribute changes, only new nodes
+            characterData: false // Don't observe text changes
+        });
+    });
+})();
+</script>
+{% endblock %} 

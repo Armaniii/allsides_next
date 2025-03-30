@@ -1,0 +1,16 @@
+{
+    "mcpServers": {
+      "sequential-thinking":{
+        "command": "C:\\WINDOWS\\System32\\cmd.exe",
+        "args": [
+          "/C",
+          "C:\\nvm4w\\nodejs\\npx.cmd",
+          "@modelcontextprotocol/server-sequential-thinking",
+          "mcp",
+          "start"
+        ]
+      
+      }
+    }
+}
+  

@@ -1,0 +1,133 @@
+version: '3.3'
+
+services:
+  nginx:
+    build: 
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - "9000:80"
+      - "8443:443"
+    volumes:
+      - ./allsides_next/backend/staticfiles:/app/backend/staticfiles
+      - ./allsides_next/backend/mediafiles:/app/backend/mediafiles
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - app_network
+
+  frontend:
+    build:
+      context: ./allsides_next/frontend
+      dockerfile: Dockerfile
+      args:
+        - NODE_ENV=${NODE_ENV:-development}
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NEXT_PUBLIC_API_URL=http://34.134.51.8:9000/api
+      - NODE_ENV=${NODE_ENV:-development}
+      - HOSTNAME=0.0.0.0
+      - NEXT_PRIVATE_HOST=0.0.0.0
+    depends_on:
+      - backend
+    networks:
+      - app_network
+    
+
+  backend:
+    build:
+      context: ./allsides_next/backend
+      dockerfile: Dockerfile
+      args:
+        - ENVIRONMENT=${NODE_ENV:-development}
+        - OPENAI_API_KEY=${OPENAI_API_KEY}
+        - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+        - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+        - LANGFUSE_HOST=${LANGFUSE_HOST}
+    expose:
+      - "8000"
+    volumes:
+      - ./allsides_next/backend:/app
+      - ./allsides_next/backend/static:/app/static
+      - ./allsides_next/backend/staticfiles:/app/staticfiles
+      - ./allsides_next/backend/mediafiles:/app/mediafiles
+    command: >
+      sh -c "python manage.py collectstatic --noinput &&
+             python manage.py migrate &&
+             gunicorn core.wsgi:application --bind 0.0.0.0:8000 --timeout 300"
+    env_file:
+      - .env
+    environment:
+      - DEBUG=${DEBUG:-False}
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-development-key}
+      - POSTGRES_DB=${POSTGRES_DB:-allsides_db}
+      - POSTGRES_USER=${POSTGRES_USER:-allsides_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-allsides_password}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-allsides_user}:${POSTGRES_PASSWORD:-allsides_password}@db:5432/${POSTGRES_DB:-allsides_db}
+      - ALLOWED_HOSTS=*
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_HOST}
+    depends_on:
+      - db
+      - redis
+    networks:
+      - app_network
+
+  db:
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+      - ./backups:/backups
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-allsides_db}
+      - POSTGRES_USER=${POSTGRES_USER:-allsides_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-allsides_password}
+    networks:
+      - app_network
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --save 60 1 --save 300 100
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL:-admin@admin.com}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD:-admin}
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - db
+    networks:
+      - app_network
+
+volumes:
+  postgres_data:
+  static_volume:
+  media_volume:
+  redis_data:
+  pgadmin_data: 
+
+networks:
+  app_network:
+    driver: bridge 
