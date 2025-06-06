@@ -5,7 +5,6 @@ import './globals.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { useState } from 'react';
-import Navbar from '@/components/ui/Navbar';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -37,7 +36,6 @@ export default function RootLayout({
       <body className={inter.className} suppressHydrationWarning>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <Navbar />
             <main className="min-h-screen">
               {children}
             </main>
