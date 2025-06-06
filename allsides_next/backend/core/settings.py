@@ -150,6 +150,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'core.middleware.PortPreservingMiddleware',
     'core.middleware.AdminPortPreservingMiddleware',  # Admin-specific middleware
+    'api.research.middleware.SSEDebugMiddleware',  # SSE debugging middleware
 ]
 
 ROOT_URLCONF = 'core.urls'
@@ -220,7 +221,17 @@ LOGGING = {
         },
         'core.middleware': {  # Add logging for our middleware
             'handlers': ['console'],
-            'level': 'DEBUG',
+            'level': 'INFO',  # Changed from DEBUG to INFO
+            'propagate': True,
+        },
+        'django.middleware': {  # Add specific logger for Django middleware
+            'handlers': ['console'],
+            'level': 'INFO',  # Set to INFO to reduce noise
+            'propagate': True,
+        },
+        'corsheaders': {  # Add specific logger for CORS middleware
+            'handlers': ['console'],
+            'level': 'INFO',  # Set to INFO to reduce noise
             'propagate': True,
         },
     },

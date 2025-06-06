@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SSE Debug Tester</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #events {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            background-color: #f9f9f9;
+        }
+        .event {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-left: 3px solid #666;
+        }
+        .event.connection {
+            border-left-color: green;
+            background-color: #e8ffe8;
+        }
+        .event.error {
+            border-left-color: red;
+            background-color: #ffeded;
+        }
+        .event.test {
+            border-left-color: blue;
+            background-color: #e8e8ff;
+        }
+        .event.complete {
+            border-left-color: purple;
+            background-color: #f8e8ff;
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 8px 15px;
+            cursor: pointer;
+        }
+        pre {
+            margin: 0;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>SSE Debug Tester</h1>
+    
+    <div class="controls">
+        <button id="connectButton">Connect to SSE</button>
+        <button id="disconnectButton" disabled>Disconnect</button>
+        <input type="checkbox" id="formatJson" checked>
+        <label for="formatJson">Format JSON</label>
+    </div>
+    
+    <div id="status">Status: Not connected</div>
+    
+    <h3>Events</h3>
+    <div id="events"></div>
+    
+    <div>
+        <h3>Connection URL</h3>
+        <input type="text" id="sseUrl" value="/api/research/sse-debug/" style="width: 100%;">
+    </div>
+    
+    <script>
+        let eventSource = null;
+        const eventsContainer = document.getElementById('events');
+        const statusElement = document.getElementById('status');
+        const connectButton = document.getElementById('connectButton');
+        const disconnectButton = document.getElementById('disconnectButton');
+        const formatJsonCheckbox = document.getElementById('formatJson');
+        const sseUrlInput = document.getElementById('sseUrl');
+        
+        function addEvent(type, data) {
+            const eventDiv = document.createElement('div');
+            eventDiv.className = `event ${type}`;
+            
+            let content;
+            if (typeof data === 'object') {
+                if (formatJsonCheckbox.checked) {
+                    content = JSON.stringify(data, null, 2);
+                } else {
+                    content = JSON.stringify(data);
+                }
+            } else {
+                content = data.toString();
+            }
+            
+            const timestamp = new Date().toLocaleTimeString();
+            eventDiv.innerHTML = `<strong>${timestamp} [${type}]</strong><pre>${content}</pre>`;
+            eventsContainer.appendChild(eventDiv);
+            eventsContainer.scrollTop = eventsContainer.scrollHeight;
+        }
+        
+        connectButton.addEventListener('click', function() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            let url = sseUrlInput.value;
+            if (!url.startsWith('http')) {
+                // Use relative URL based on current page location
+                const baseUrl = window.location.protocol + '//' + window.location.host;
+                url = baseUrl + (url.startsWith('/') ? url : ('/' + url));
+            }
+            
+            try {
+                statusElement.textContent = `Status: Connecting to ${url}...`;
+                eventSource = new EventSource(url);
+                
+                eventSource.onopen = function(event) {
+                    statusElement.textContent = 'Status: Connected';
+                    connectButton.disabled = true;
+                    disconnectButton.disabled = false;
+                    addEvent('connection', 'Connection opened');
+                };
+                
+                eventSource.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        const eventType = data.type || 'message';
+                        addEvent(eventType.replace('_', '-'), data);
+                    } catch (error) {
+                        addEvent('error', `Error parsing event data: ${error.message}\nRaw data: ${event.data}`);
+                    }
+                };
+                
+                eventSource.onerror = function(error) {
+                    statusElement.textContent = 'Status: Error - See events log';
+                    addEvent('error', `Connection error: ${error.type}`);
+                };
+            } catch (error) {
+                statusElement.textContent = `Status: Failed to connect - ${error.message}`;
+                addEvent('error', `Failed to create EventSource: ${error.message}`);
+            }
+        });
+        
+        disconnectButton.addEventListener('click', function() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                statusElement.textContent = 'Status: Disconnected';
+                connectButton.disabled = false;
+                disconnectButton.disabled = true;
+                addEvent('connection', 'Connection closed');
+            }
+        });
+        
+        // Update connection URL based on current location
+        window.addEventListener('DOMContentLoaded', () => {
+            const baseUrl = window.location.protocol + '//' + window.location.host;
+            sseUrlInput.value = `${baseUrl}/api/research/sse-debug/`;
+        });
+    </script>
+</body>
+</html> 

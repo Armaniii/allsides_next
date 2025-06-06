@@ -11,6 +11,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Add build argument
 ARG ENVIRONMENT=development
+ARG OPENAI_API_KEY
+ARG TAVILY_API_KEY
+ARG LINKUP_API_KEY 
+ARG GOOGLE_API_KEY
+ARG LANGFUSE_SECRET_KEY
+ARG LANGFUSE_PUBLIC_KEY
+ARG LANGFUSE_HOST
+
+# Set runtime environment variables from build args
+ENV OPENAI_API_KEY=${OPENAI_API_KEY}
+ENV TAVILY_API_KEY=${TAVILY_API_KEY}
+ENV LINKUP_API_KEY=${LINKUP_API_KEY}
+ENV GOOGLE_API_KEY=${GOOGLE_API_KEY}
+ENV LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+ENV LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+ENV LANGFUSE_HOST=${LANGFUSE_HOST}
+ENV REDIS_HOST=redis
 
 # Install system dependencies
 RUN apt-get update \
@@ -31,8 +48,8 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Set working directory
 WORKDIR /app
 
-# Copy only pyproject.toml first
-COPY pyproject.toml ./
+# Copy only pyproject.toml and requirements.txt first
+COPY pyproject.toml requirements.txt ./
 
 # Install dependencies based on environment
 RUN if [ "$ENVIRONMENT" = "production" ] ; then \
@@ -41,8 +58,15 @@ RUN if [ "$ENVIRONMENT" = "production" ] ; then \
         poetry install --no-root --no-cache ; \
     fi
 
+# Explicitly install research requirements
+RUN pip install open-deep-research>=0.0.10 langgraph>=0.2.55 langchain>=0.1.0 \
+        langchain-core>=0.1.11 langchain-community>=0.3.9 langchain-openai>=0.3.7 \
+        python-dotenv>=1.0.1 redis>=5.0.1 requests>=2.32.3 nest-asyncio>=1.5.8 asgiref>=3.7.2 \
+        langchain-ollama==0.2.2 langchain_core>=0.1.20 pydantic>=1.10.8
+
 # Copy application code
 COPY . .
+
 
 # Collect static files if in production
 RUN if [ "$ENVIRONMENT" = "production" ] ; then \

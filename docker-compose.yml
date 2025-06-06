@@ -48,6 +48,9 @@ services:
       args:
         - ENVIRONMENT=${NODE_ENV:-development}
         - OPENAI_API_KEY=${OPENAI_API_KEY}
+        - TAVILY_API_KEY=${TAVILY_API_KEY}
+        - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+        - LINKUP_API_KEY=${LINKUP_API_KEY}
         - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
         - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
         - LANGFUSE_HOST=${LANGFUSE_HOST}
@@ -58,6 +61,8 @@ services:
       - ./allsides_next/backend/static:/app/static
       - ./allsides_next/backend/staticfiles:/app/staticfiles
       - ./allsides_next/backend/mediafiles:/app/mediafiles
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: >
       sh -c "python manage.py collectstatic --noinput &&
              python manage.py migrate &&
@@ -73,9 +78,14 @@ services:
       - DATABASE_URL=postgres://${POSTGRES_USER:-allsides_user}:${POSTGRES_PASSWORD:-allsides_password}@db:5432/${POSTGRES_DB:-allsides_db}
       - ALLOWED_HOSTS=*
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LINKUP_API_KEY=${LINKUP_API_KEY}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_HOST=${LANGFUSE_HOST}
+      - REDIS_HOST=redis
+      - OLLAMA_HOST=host.docker.internal:11434
     depends_on:
       - db
       - redis

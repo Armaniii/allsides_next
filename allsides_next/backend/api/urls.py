@@ -24,6 +24,8 @@ urlpatterns = [
     path('cache/optimize/', views.optimize_cache_view, name='optimize_cache'),
     path('cache/warm/', views.warm_cache_view, name='warm_cache'),
     path('cache-stats/', views.get_cache_stats, name='cache-stats'),
+    # Research API endpoints
+    path('research/', include('api.research.urls')),
     # Include router URLs last to avoid conflicts
     path('', include(router.urls)),
 ]
