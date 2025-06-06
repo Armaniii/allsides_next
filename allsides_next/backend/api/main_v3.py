@@ -222,26 +222,40 @@ if PROMPT_MANAGER == "langfuse":
             logger.warning("Missing Langfuse credentials, falling back to default prompt")
             PROMPT_MANAGER = "default"
         else:
-            # Initialize Langfuse client
+            # Initialize Langfuse client with proper configuration
             langfuse = Langfuse(
                 public_key=langfuse_public_key,
                 secret_key=langfuse_secret_key,
-                host=langfuse_host
+                host=langfuse_host,
+                debug=False,  # Set to True for debugging
+                enabled=True,
+                flush_at=10,  # Flush after 10 events
+                flush_interval=1,  # Flush every 1 second
+                max_retries=3,
+                timeout=30  # 30 second timeout
             )
-            # check if langfuse is initialized
-            if not langfuse:
-                logger.error("Failed to initialize Langfuse")
-                PROMPT_MANAGER = "default"
+            
+            # Verify connection
+            if langfuse.auth_check():
+                logger.info("Langfuse initialized and authenticated successfully")
+                
+                # Test prompt retrieval
+                try:
+                    langfuse_prompt = langfuse.get_prompt("AllStances_v1")
+                    if langfuse_prompt:
+                        logger.info(f"Successfully retrieved prompt: AllStances_v1")
+                    else:
+                        logger.warning("Prompt 'AllStances_v1' not found in Langfuse")
+                except Exception as prompt_error:
+                    logger.warning(f"Error retrieving prompt: {str(prompt_error)}")
             else:
-                logger.info("Langfuse initialized successfully")
-
-
-            assert langfuse.auth_check()
-            langfuse_prompt = langfuse.get_prompt("AllStances_v1")
-            print(langfuse_prompt.prompt)
+                logger.error("Langfuse authentication failed")
+                langfuse = None
+                PROMPT_MANAGER = "default"
 
     except Exception as e:
         logger.error(f"Failed to initialize Langfuse: {str(e)}")
+        langfuse = None
         PROMPT_MANAGER = "default"
         logger.info("Falling back to default prompt management")
 
@@ -387,15 +401,63 @@ def generate_cache_key(topic: str, diversity: float, num_stances: int, system_co
 from langfuse.decorators import langfuse_context, observe
 
 
-def complete(topic: str, diversity: float, num_stances: int = 3) -> Dict[str, Any]:
-    """Get completion from OpenAI with structured output and caching."""
-    # Normalize the topic first
-    normalized_topic = normalize_query(topic)
-    logger.info(f"Normalized topic: '{normalized_topic}' (original: '{topic}')")
-    # Start Langfuse Trace
-    trace = langfuse.trace(name="allstances_completion",metadata=True)
-    # trace.generation(name="allstances_output", metadata=True)
+# GPT-4 pricing (as of 2024)
+GPT4_INPUT_COST_PER_1K_TOKENS = 0.03
+GPT4_OUTPUT_COST_PER_1K_TOKENS = 0.06
 
+def calculate_openai_cost(input_tokens: int, output_tokens: int, model: str = "gpt-4") -> float:
+    """Calculate the cost of an OpenAI API call based on token usage."""
+    try:
+        if model.startswith("gpt-4"):
+            input_cost = (input_tokens / 1000) * GPT4_INPUT_COST_PER_1K_TOKENS
+            output_cost = (output_tokens / 1000) * GPT4_OUTPUT_COST_PER_1K_TOKENS
+            return round(input_cost + output_cost, 6)
+        else:
+            # Default to GPT-4 pricing for unknown models
+            input_cost = (input_tokens / 1000) * GPT4_INPUT_COST_PER_1K_TOKENS
+            output_cost = (output_tokens / 1000) * GPT4_OUTPUT_COST_PER_1K_TOKENS
+            return round(input_cost + output_cost, 6)
+    except Exception as e:
+        logger.error(f"Error calculating cost: {str(e)}")
+        return 0.0
+
+
+def complete(topic: str, diversity: float, num_stances: int = 3, user_id: Optional[str] = None, session_id: Optional[str] = None, request_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Get completion from OpenAI with structured output and caching."""
+    trace = None
+    generation = None
+    
+    try:
+        # Normalize the topic first
+        normalized_topic = normalize_query(topic)
+        logger.info(f"Normalized topic: '{normalized_topic}' (original: '{topic}')")
+        
+        # Prepare trace metadata
+        trace_metadata = {
+            "topic": topic,
+            "normalized_topic": normalized_topic,
+            "diversity": diversity,
+            "num_stances": num_stances,
+            "cache_version": CACHE_VERSION,
+            "prompt_manager": PROMPT_MANAGER
+        }
+        
+        # Add request metadata if provided
+        if request_metadata:
+            trace_metadata.update(request_metadata)
+        
+        # Start Langfuse Trace with proper context
+        if langfuse:
+            trace = langfuse.trace(
+                name="allstances_completion",
+                user_id=user_id,
+                session_id=session_id,
+                metadata=trace_metadata,
+                tags=["allstances", "argument_generation", f"stances_{num_stances}"]
+            )
+            logger.info(f"Started Langfuse trace: {trace.id if trace else 'None'}")
+        else:
+            logger.warning("Langfuse not available, skipping trace creation")
 
     
     # Get system configuration first to ensure consistent cache key generation
@@ -427,6 +489,34 @@ def complete(topic: str, diversity: float, num_stances: int = 3) -> Dict[str, An
         cached_result = get_cached_response(cache_key)
         if cached_result:
             logger.info(f"✅ Cache HIT for topic: '{normalized_topic}'")
+            
+            # Create a span for cache hit if trace exists
+            if trace:
+                cache_span = trace.span(
+                    name="cache_hit",
+                    metadata={
+                        "cache_key": cache_key,
+                        "cache_hit": True,
+                        "response_source": "redis_cache"
+                    }
+                )
+                cache_span.end(output=cached_result)
+                
+                # Update trace metadata
+                trace.update(
+                    metadata={
+                        **trace_metadata,
+                        "cache_hit": True,
+                        "response_source": "cache"
+                    }
+                )
+                
+                # Flush events for cache hits too
+                try:
+                    langfuse.flush()
+                except Exception as flush_error:
+                    logger.warning(f"Failed to flush Langfuse events on cache hit: {str(flush_error)}")
+            
             return cached_result
 
         logger.info(f"❌ Cache MISS for topic: '{normalized_topic}'")
@@ -437,41 +527,85 @@ def complete(topic: str, diversity: float, num_stances: int = 3) -> Dict[str, An
         else:
             system_message = {"role": "system", "content": system_content}
 
+        # Prepare messages for API call
+        messages = [
+            system_message,
+            {"role": "user", "content": normalized_topic}
+        ]
+        
+        # Create generation in trace if available
+        if trace:
+            generation = trace.generation(
+                name="allstances_output",
+                model="gpt-4",
+                model_parameters={
+                    "temperature": diversity,
+                    "max_tokens": None,
+                    "top_p": 1.0,
+                    "frequency_penalty": 0,
+                    "presence_penalty": 0,
+                    "stances": num_stances
+                },
+                input=messages,
+                metadata={
+                    "cache_key": cache_key,
+                    "instructor_enabled": True,
+                    "response_model": "ArgumentResponse"
+                }
+            )
+            logger.info(f"Created generation: {generation.id if generation else 'None'}")
+
         # Call OpenAI API with instructor to get structured output
         try:
-            generation = trace.generation(name="allstances_output",
-            model="gpt-4",
-            model_parameters={
-                "temperature": diversity,
-                "stances": num_stances
-            },
-            input=[
-                {
-                    "role": "system",
-                    "content": system_message['content']
-                },
-                {"role": "user", "content": normalized_topic}
-            ],
+            start_time = time.time()
             
-            )
-
             response = client.chat.completions.create(
                 model='gpt-4',
-                messages=[
-                    system_message,
-                    {"role": "user", "content": normalized_topic}
-                ],
+                messages=messages,
                 temperature=diversity,
                 stream=False,
                 response_model=ArgumentResponse
             )
-
-          
-            generation.end(
-            )
-
-            # Convert response to dict with model field
+            
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+            
+            # Convert response to dict
             result = response.to_dict()
+            
+            # Extract usage information if available
+            usage_data = None
+            cost = 0.0
+            
+            if hasattr(response, '_raw_response') and hasattr(response._raw_response, 'usage'):
+                usage = response._raw_response.usage
+                usage_data = {
+                    "input_tokens": usage.prompt_tokens,
+                    "output_tokens": usage.completion_tokens,
+                    "total_tokens": usage.total_tokens
+                }
+                cost = calculate_openai_cost(usage.prompt_tokens, usage.completion_tokens, "gpt-4")
+                logger.info(f"Usage: {usage_data}, Cost: ${cost}")
+            else:
+                logger.warning("Usage information not available from response")
+            
+            # End generation with complete information
+            if generation:
+                generation_end_data = {
+                    "output": result,
+                    "end_time": end_time,
+                    "metadata": {
+                        "latency_ms": latency_ms,
+                        "cache_miss": True,
+                        "cost_usd": cost
+                    }
+                }
+                
+                if usage_data:
+                    generation_end_data["usage"] = usage_data
+                
+                generation.end(**generation_end_data)
+                logger.info(f"Ended generation with usage data: {usage_data}")
 
             # Cache the result
             cache_success = set_cached_response(cache_key, result)
@@ -480,10 +614,42 @@ def complete(topic: str, diversity: float, num_stances: int = 3) -> Dict[str, An
             else:
                 logger.warning(f"⚠️ Failed to cache response for topic: '{normalized_topic}' with key: {cache_key}")
             
+            # Flush Langfuse events
+            if langfuse:
+                try:
+                    langfuse.flush()
+                    logger.debug("Flushed Langfuse events")
+                except Exception as flush_error:
+                    logger.warning(f"Failed to flush Langfuse events: {str(flush_error)}")
+            
             return result
 
         except Exception as api_error:
             logger.error(f"API Error: {str(api_error)}")
+            
+            # Track error in generation if available
+            if generation:
+                try:
+                    generation.end(
+                        output=None,
+                        metadata={
+                            "error": str(api_error),
+                            "error_type": type(api_error).__name__,
+                            "cache_miss": True,
+                            "latency_ms": int((time.time() - start_time) * 1000) if 'start_time' in locals() else None
+                        }
+                    )
+                    logger.info("Recorded API error in generation")
+                except Exception as gen_error:
+                    logger.warning(f"Failed to record error in generation: {str(gen_error)}")
+            
+            # Flush Langfuse events even on error
+            if langfuse:
+                try:
+                    langfuse.flush()
+                except Exception as flush_error:
+                    logger.warning(f"Failed to flush Langfuse events on error: {str(flush_error)}")
+            
             error_response = ArgumentResponse(
                 arguments=[
                     Stance(
@@ -497,12 +663,34 @@ def complete(topic: str, diversity: float, num_stances: int = 3) -> Dict[str, An
                         supporting_arguments=[str(api_error)]
                     )
                 ],
-                model="gpt-4"  # Add model field to error response
+                model="gpt-4"
             )
             return error_response.to_dict()
 
     except Exception as e:
         logger.error(f"Error in complete: {str(e)}")
+        
+        # Track error in trace if available
+        if trace:
+            try:
+                trace.update(
+                    metadata={
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "function": "complete"
+                    }
+                )
+                logger.info("Recorded system error in trace")
+            except Exception as trace_error:
+                logger.warning(f"Failed to record error in trace: {str(trace_error)}")
+        
+        # Flush Langfuse events even on error
+        if langfuse:
+            try:
+                langfuse.flush()
+            except Exception as flush_error:
+                logger.warning(f"Failed to flush Langfuse events on system error: {str(flush_error)}")
+        
         error_response = ArgumentResponse(
             arguments=[
                 Stance(
@@ -516,7 +704,7 @@ def complete(topic: str, diversity: float, num_stances: int = 3) -> Dict[str, An
                     supporting_arguments=["Please try again later", "If the issue persists, contact support"]
                 )
             ],
-            model="gpt-4"  # Add model field to error response
+            model="gpt-4"
         )
         return error_response.to_dict()
 

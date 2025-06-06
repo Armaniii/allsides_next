@@ -166,3 +166,74 @@ NEXT_PUBLIC_API_URL=http://34.134.51.8:9000/api
 6. **CORS**: Configured to allow requests from frontend origins. Add new origins to both Django and Nginx configs.
 
 7. **Research Module**: Requires at least one LLM provider key (OPENAI_API_KEY) and one search provider key (TAVILY_API_KEY, etc.).
+
+## Main Query Processing Engine (api/main_v3.py)
+
+The `main_v3.py` file is the core engine that processes user queries and generates diverse political perspectives using GPT-4. Here's how it works:
+
+### Key Components
+
+1. **Redis Caching System**:
+   - Uses Redis connection pool for efficient caching
+   - Generates deterministic cache keys based on normalized query, diversity score, number of stances, and system prompt
+   - Implements intelligent TTL (time-to-live) based on access frequency
+   - Tracks cache hits/misses and access patterns
+   - Includes cache maintenance tasks for optimization and consistency checks
+
+2. **Langfuse Integration** (lines 188-246, 387-471):
+   - Configured via `PROMPT_MANAGER="langfuse"` environment variable
+   - Retrieves system prompts from Langfuse service (`AllStances_v1` prompt)
+   - Creates traces for each completion request for monitoring
+   - Falls back to default prompt if Langfuse is unavailable
+   - Tracks model parameters like temperature and stance count
+
+3. **OpenAI API Integration** (lines 257-268, 442-467):
+   - Uses OpenAI client with Instructor library for structured output
+   - Configured with 5-minute timeout for long requests
+   - Makes calls to GPT-4 model with structured response format
+   - Handles streaming and non-streaming responses
+
+4. **Query Processing Flow**:
+   ```
+   User Query → Normalize Query → Generate Cache Key → Check Cache
+     ↓ (cache miss)
+   Get System Prompt from Langfuse → Add Stance Count → Call GPT-4
+     ↓
+   Parse Structured Response → Cache Result → Return to User
+   ```
+
+5. **Structured Response Models** (lines 569-606):
+   - `Stance`: Contains stance name, core argument, and 1-3 supporting arguments
+   - `ArgumentResponse`: Contains 2-7 stances and the model used
+   - Uses Pydantic for validation and serialization
+
+6. **Cache Key Generation** (lines 352-386):
+   - Normalizes query text (lowercase, remove extra spaces, strip punctuation)
+   - Includes cache version, normalized topic, diversity score, stance count, and system prompt
+   - Creates SHA-256 hash for consistent, deterministic keys
+
+7. **Performance Features**:
+   - Query normalization ensures similar queries hit the same cache
+   - Background cache maintenance tasks run every 6 hours
+   - Cache warming capabilities for batch processing
+   - Memory usage monitoring and automatic cleanup when >80% full
+
+### Configuration Requirements
+
+```bash
+# Required Environment Variables
+OPENAI_API_KEY=your-openai-key
+LANGFUSE_HOST=https://vector.allsides.com
+LANGFUSE_PUBLIC_KEY=your-public-key
+LANGFUSE_SECRET_KEY=your-secret-key
+REDIS_HOST=redis  # or your Redis host
+REDIS_PORT=6379
+CACHE_TTL=3600  # 1 hour default
+```
+
+### Error Handling
+
+- Graceful fallback to default prompts if Langfuse fails
+- Returns structured error responses maintaining the expected format
+- Comprehensive logging for debugging
+- Redis connection pooling with retry logic
