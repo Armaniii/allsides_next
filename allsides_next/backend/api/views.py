@@ -1,12 +1,15 @@
 from django.shortcuts import render
-from rest_framework import viewsets, status, generics
+from rest_framework import viewsets, status, generics, renderers
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.contrib.auth import get_user_model
-# from django.http import StreamingHttpResponse
+from django.http import StreamingHttpResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
 import json
+import jwt
 from .models import Query, ArgumentRating, CacheStatistics, ThumbsRating
 from .serializers import UserSerializer, QuerySerializer, RegisterSerializer, ArgumentRatingSerializer, ThumbsRatingSerializer
 from . import main_v3 as gpt_service
@@ -25,17 +28,62 @@ from .main_v3 import (
     normalize_query,
     generate_cache_key,
     get_cached_response,
+    get_local_llm_status,
+    enhance_query_with_local_llm,
+    analyze_argument_with_local_llm,
     set_cached_response
 )
 import asyncio
 from functools import wraps
 from django.utils.decorators import sync_and_async_middleware
-# from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync
+from concurrent.futures import ThreadPoolExecutor
 # import nest_asyncio
 # nest_asyncio.apply()  # Allow nested event loops
 
+# Import SSE utilities from research module
+from .research.utils import (
+    setup_sse_response,
+    generate_sse_event,
+    generate_sse_keepalive
+)
+
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+# CRITICAL FIX: Create a bounded thread pool to prevent resource exhaustion
+# This prevents uncontrolled thread proliferation in production
+# IMPORTANT: Set to 1 because Ollama can only process 1 request at a time
+# With 4 Gunicorn workers, this gives us max 4 concurrent attempts (still high but manageable)
+streaming_executor = ThreadPoolExecutor(
+    max_workers=1,  # Match Ollama's single-threaded processing capability
+    thread_name_prefix='stream-query-'
+)
+
+# EventSourceRenderer for SSE
+class EventSourceRenderer(renderers.BaseRenderer):
+    """Custom renderer for Server-Sent Events (SSE)."""
+    media_type = 'text/event-stream'
+    format = 'eventstream'
+    charset = 'utf-8'
+    
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        """
+        Return data for Server-Sent Events.
+        For streaming responses, this renderer is not used - we return StreamingHttpResponse directly.
+        This is mainly for content negotiation compatibility.
+        """
+        if isinstance(data, str):
+            if data.startswith('data:') or data == ":\n\n":
+                return data.encode(self.charset)
+            return f"data: {data.rstrip()}\n\n".encode(self.charset)
+        
+        try:
+            json_str = json.dumps(data)
+            return f"data: {json_str}\n\n".encode(self.charset)
+        except (TypeError, ValueError) as e:
+            logger.error(f"EventSourceRenderer: Error serializing data: {str(e)}")
+            return f"data: {str(data)}\n\n".encode(self.charset)
 
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -493,6 +541,541 @@ class QueryViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='stream',
+        url_name='query-stream',
+        renderer_classes=[EventSourceRenderer]
+    )
+    def stream_query(self, request):
+        """Stream query processing with real-time progress updates."""
+        try:
+            logger.info(f"Starting stream query with data: {request.data}")
+            logger.info(f"Request headers: {dict(request.headers)}")
+            
+            # Check query limit
+            user = request.user
+            remaining_queries = user.get_remaining_queries()
+            
+            if remaining_queries <= 0:
+                logger.warning(f"Query limit reached for user {user.username}")
+                # For SSE endpoints, we need to return streaming response even for errors
+                def error_stream():
+                    yield generate_sse_event({
+                        'type': 'error',
+                        'message': 'Daily query limit reached'
+                    })
+                
+                response = StreamingHttpResponse(
+                    error_stream(),
+                    content_type='text/event-stream'
+                )
+                response = setup_sse_response(response)
+                response.status_code = 400
+                return response
+            
+            # Extract query parameters
+            original_query_text = request.data.get('query_text', '')
+            diversity_score = float(request.data.get('diversity_score', 0.5))
+            num_stances = int(request.data.get('num_stances', 3))
+            
+            if not original_query_text:
+                # For SSE endpoints, we need to return streaming response even for errors
+                def error_stream():
+                    yield generate_sse_event({
+                        'type': 'error',
+                        'message': 'Query text is required'
+                    })
+                
+                response = StreamingHttpResponse(
+                    error_stream(),
+                    content_type='text/event-stream'
+                )
+                response = setup_sse_response(response)
+                response.status_code = 400
+                return response
+            
+            def event_stream():
+                """Generator function for SSE events."""
+                # Send connection established event
+                yield generate_sse_event({
+                    'type': 'connection_established',
+                    'message': 'Connected to query processing service'
+                })
+                yield generate_sse_keepalive()
+                
+                # Send processing start event
+                yield generate_sse_event({
+                    'type': 'processing_start',
+                    'message': f'Starting to process: "{original_query_text}"',
+                    'num_stances': num_stances
+                })
+                yield generate_sse_keepalive()
+                
+                try:
+                    # Get system configuration
+                    config = gpt_service.get_config()
+                    system_message = config['system_prompt']
+                    if isinstance(system_message, list):
+                        system_message = system_message[0]
+                    
+                    # Get system content
+                    if isinstance(system_message, dict):
+                        system_content = system_message.get('content', gpt_service.DEFAULT_SYSTEM_PROMPT)
+                    else:
+                        system_content = str(system_message)
+                    
+                    # Send initial progress event
+                    yield generate_sse_event({
+                        'type': 'progress',
+                        'message': '🔄 Analyzing query and starting processing...'
+                    })
+                    yield generate_sse_keepalive()
+                    
+                    # Create a queue for progress messages
+                    import queue
+                    progress_queue = queue.Queue()
+                    result_container = {}
+                    exception_container = {}
+                    
+                    def progress_callback(message: str):
+                        progress_queue.put(message)
+                    
+                    async def run_processing():
+                        try:
+                            # Check if we should use Junto Evidence Pipeline
+                            from .main_v3 import USE_JUNTO_EVIDENCE_PIPELINE, junto_evidence_finder, junto_generator, complete_with_junto_evidence_pipeline
+                            
+                            if USE_JUNTO_EVIDENCE_PIPELINE and junto_evidence_finder.enabled and junto_generator.enabled:
+                                logger.info(f"🔄 Stream: Using Junto Evidence Pipeline for topic: '{original_query_text}'")
+                                result = await complete_with_junto_evidence_pipeline(
+                                    original_query_text,
+                                    diversity_score,
+                                    num_stances,
+                                    str(user.id),
+                                    None,
+                                    None,
+                                    progress_callback
+                                )
+                            else:
+                                logger.info(f"🔄 Stream: Using standard pipeline for topic: '{original_query_text}'")
+                                result = gpt_service.complete(
+                                    original_query_text,
+                                    diversity_score,
+                                    num_stances,
+                                    user_id=str(user.id),
+                                    session_id=None,
+                                    request_metadata=None,
+                                    progress_callback=progress_callback
+                                )
+                            
+                            result_container['result'] = result
+                            progress_queue.put('__COMPLETE__')
+                        except Exception as e:
+                            exception_container['error'] = e
+                            progress_queue.put('__ERROR__')
+                    
+                    # Start processing in a separate thread with async support
+                    def run_async_in_thread():
+                        # PRODUCTION FIX: Use asyncio.run() for safer event loop management
+                        # This automatically handles loop creation, execution, and cleanup
+                        try:
+                            asyncio.run(run_processing())
+                        except Exception as e:
+                            # Ensure consistent error handling
+                            exception_container['error'] = e
+                            progress_queue.put('__ERROR__')
+                    
+                    # CRITICAL FIX: Use bounded thread pool instead of creating unlimited threads
+                    # This prevents resource exhaustion under concurrent load
+                    future = streaming_executor.submit(run_async_in_thread)
+                    
+                    # Stream progress updates as they come
+                    while True:
+                        try:
+                            message = progress_queue.get(timeout=1.0)
+                            if message == '__COMPLETE__':
+                                break
+                            elif message == '__ERROR__':
+                                raise exception_container['error']
+                            else:
+                                yield generate_sse_event({
+                                    'type': 'progress',
+                                    'message': message
+                                })
+                                yield generate_sse_keepalive()
+                        except queue.Empty:
+                            # Send keepalive if no progress updates
+                            yield generate_sse_keepalive()
+                            if future.done():
+                                break
+                    
+                    # Wait for the processing to complete
+                    future.result(timeout=600)  # 10 minute timeout
+                    result = result_container.get('result')
+                    
+                    # Send completion event
+                    yield generate_sse_event({
+                        'type': 'processing_complete',
+                        'message': '✅ Query processing completed successfully'
+                    })
+                    yield generate_sse_keepalive()
+                    
+                    # Create query record
+                    query = Query.objects.create(
+                        user=user,
+                        query_text=original_query_text,
+                        diversity_score=diversity_score,
+                        response=result,
+                        system_prompt=system_content,
+                        is_active=True
+                    )
+                    
+                    # Update user query count
+                    user.daily_query_count = F('daily_query_count') + 1
+                    user.save(update_fields=['daily_query_count'])
+                    user.refresh_from_db()
+                    
+                    # Send final result
+                    yield generate_sse_event({
+                        'type': 'query_complete',
+                        'query_id': query.id,
+                        'query_text': original_query_text,
+                        'result': result,
+                        'message': 'Query completed and saved successfully'
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error in stream query: {str(e)}")
+                    yield generate_sse_event({
+                        'type': 'error',
+                        'message': f'Error processing query: {str(e)}'
+                    })
+                
+                # Send stream complete event
+                yield generate_sse_event({
+                    'type': 'stream_complete',
+                    'message': 'Stream completed'
+                })
+                yield generate_sse_keepalive()
+            
+            # Return streaming response
+            response = StreamingHttpResponse(
+                event_stream(),
+                content_type='text/event-stream'
+            )
+            response = setup_sse_response(response)
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error setting up stream query: {str(e)}")
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+@csrf_exempt
+def stream_query_view(request):
+    """Stream query processing with real-time progress updates - standalone view."""
+    try:
+        # Manual JWT authentication
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            def error_stream():
+                yield generate_sse_event({
+                    'type': 'error',
+                    'message': 'Authentication required'
+                })
+            
+            response = StreamingHttpResponse(
+                error_stream(),
+                content_type='text/event-stream'
+            )
+            response = setup_sse_response(response)
+            response.status_code = 401
+            return response
+        
+        token = auth_header.split(' ')[1]
+        try:
+            from rest_framework_simplejwt.tokens import UntypedToken
+            from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+            
+            # Validate token
+            UntypedToken(token)
+            
+            # Decode token to get user
+            decoded_data = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+            user_id = decoded_data.get('user_id')
+            user = User.objects.get(id=user_id)
+            
+        except (InvalidToken, TokenError, jwt.DecodeError, User.DoesNotExist) as e:
+            def error_stream():
+                yield generate_sse_event({
+                    'type': 'error',
+                    'message': 'Invalid authentication token'
+                })
+            
+            response = StreamingHttpResponse(
+                error_stream(),
+                content_type='text/event-stream'
+            )
+            response = setup_sse_response(response)
+            response.status_code = 401
+            return response
+        
+        # Parse JSON data manually since we're not using DRF
+        import json
+        try:
+            request_data = json.loads(request.body.decode('utf-8'))
+        except json.JSONDecodeError:
+            def error_stream():
+                yield generate_sse_event({
+                    'type': 'error',
+                    'message': 'Invalid JSON data'
+                })
+            
+            response = StreamingHttpResponse(
+                error_stream(),
+                content_type='text/event-stream'
+            )
+            response = setup_sse_response(response)
+            response.status_code = 400
+            return response
+        
+        logger.info(f"Starting stream query with data: {request_data}")
+        logger.info(f"Request headers: {dict(request.headers)}")
+        
+        # Check query limit
+        remaining_queries = user.get_remaining_queries()
+        
+        if remaining_queries <= 0:
+            logger.warning(f"Query limit reached for user {user.username}")
+            # For SSE endpoints, we need to return streaming response even for errors
+            def error_stream():
+                yield generate_sse_event({
+                    'type': 'error',
+                    'message': 'Daily query limit reached'
+                })
+            
+            response = StreamingHttpResponse(
+                error_stream(),
+                content_type='text/event-stream'
+            )
+            response = setup_sse_response(response)
+            response.status_code = 400
+            return response
+        
+        # Extract query parameters
+        original_query_text = request_data.get('query_text', '')
+        diversity_score = float(request_data.get('diversity_score', 0.5))
+        num_stances = int(request_data.get('num_stances', 3))
+        
+        if not original_query_text:
+            # For SSE endpoints, we need to return streaming response even for errors
+            def error_stream():
+                yield generate_sse_event({
+                    'type': 'error',
+                    'message': 'Query text is required'
+                })
+            
+            response = StreamingHttpResponse(
+                error_stream(),
+                content_type='text/event-stream'
+            )
+            response = setup_sse_response(response)
+            response.status_code = 400
+            return response
+        
+        def event_stream():
+            """Generator function for SSE events."""
+            # Send connection established event
+            yield generate_sse_event({
+                'type': 'connection_established',
+                'message': 'Connected to query processing service'
+            })
+            yield generate_sse_keepalive()
+            
+            # Send processing start event
+            yield generate_sse_event({
+                'type': 'processing_start',
+                'message': f'Starting to process: "{original_query_text}"',
+                'num_stances': num_stances
+            })
+            yield generate_sse_keepalive()
+            
+            try:
+                # Get system configuration
+                config = gpt_service.get_config()
+                system_message = config['system_prompt']
+                if isinstance(system_message, list):
+                    system_message = system_message[0]
+                
+                # Get system content
+                if isinstance(system_message, dict):
+                    system_content = system_message.get('content', gpt_service.DEFAULT_SYSTEM_PROMPT)
+                else:
+                    system_content = str(system_message)
+                
+                # Send initial progress event
+                yield generate_sse_event({
+                    'type': 'progress',
+                    'message': '🔄 Analyzing query and starting processing...'
+                })
+                yield generate_sse_keepalive()
+                
+                # Create a queue for progress messages
+                import queue
+                progress_queue = queue.Queue()
+                result_container = {}
+                exception_container = {}
+                
+                def progress_callback(message: str):
+                    progress_queue.put(message)
+                
+                async def run_processing():
+                    try:
+                        # Check if we should use Junto Evidence Pipeline
+                        from .main_v3 import USE_JUNTO_EVIDENCE_PIPELINE, junto_evidence_finder, junto_generator, complete_with_junto_evidence_pipeline
+                        
+                        if USE_JUNTO_EVIDENCE_PIPELINE and junto_evidence_finder.enabled and junto_generator.enabled:
+                            logger.info(f"🔄 Stream: Using Junto Evidence Pipeline for topic: '{original_query_text}'")
+                            result = await complete_with_junto_evidence_pipeline(
+                                original_query_text,
+                                diversity_score,
+                                num_stances,
+                                str(user.id),
+                                None,
+                                None,
+                                progress_callback
+                            )
+                        else:
+                            logger.info(f"🔄 Stream: Using standard pipeline for topic: '{original_query_text}'")
+                            result = gpt_service.complete(
+                                original_query_text,
+                                diversity_score,
+                                num_stances,
+                                user_id=str(user.id),
+                                session_id=None,
+                                request_metadata=None,
+                                progress_callback=progress_callback
+                            )
+                        
+                        result_container['result'] = result
+                        progress_queue.put('__COMPLETE__')
+                    except Exception as e:
+                        exception_container['error'] = e
+                        progress_queue.put('__ERROR__')
+                
+                # Start processing in a separate thread with async support
+                def run_async_in_thread():
+                    # PRODUCTION FIX: Use asyncio.run() for safer event loop management
+                    # This automatically handles loop creation, execution, and cleanup
+                    try:
+                        asyncio.run(run_processing())
+                    except Exception as e:
+                        # Ensure consistent error handling
+                        exception_container['error'] = e
+                        progress_queue.put('__ERROR__')
+                
+                # CRITICAL FIX: Use bounded thread pool instead of creating unlimited threads
+                # This prevents resource exhaustion under concurrent load
+                future = streaming_executor.submit(run_async_in_thread)
+                
+                # Stream progress updates as they come
+                while True:
+                    try:
+                        message = progress_queue.get(timeout=1.0)
+                        if message == '__COMPLETE__':
+                            break
+                        elif message == '__ERROR__':
+                            raise exception_container['error']
+                        else:
+                            yield generate_sse_event({
+                                'type': 'progress',
+                                'message': message
+                            })
+                            yield generate_sse_keepalive()
+                    except queue.Empty:
+                        # Send keepalive if no progress updates
+                        yield generate_sse_keepalive()
+                        if future.done():
+                            break
+                
+                # Wait for the processing to complete
+                future.result(timeout=600)  # 10 minute timeout
+                result = result_container.get('result')
+                
+                # Send completion event
+                yield generate_sse_event({
+                    'type': 'processing_complete',
+                    'message': '✅ Query processing completed successfully'
+                })
+                yield generate_sse_keepalive()
+                
+                # Create query record
+                query = Query.objects.create(
+                    user=user,
+                    query_text=original_query_text,
+                    diversity_score=diversity_score,
+                    response=result,
+                    system_prompt=system_content,
+                    is_active=True
+                )
+                
+                # Update user query count
+                user.daily_query_count = F('daily_query_count') + 1
+                user.save(update_fields=['daily_query_count'])
+                user.refresh_from_db()
+                
+                # Send final result
+                yield generate_sse_event({
+                    'type': 'query_complete',
+                    'query_id': query.id,
+                    'query_text': original_query_text,
+                    'result': result,
+                    'message': 'Query completed and saved successfully'
+                })
+                
+            except Exception as e:
+                logger.error(f"Error in stream query: {str(e)}")
+                yield generate_sse_event({
+                    'type': 'error',
+                    'message': f'Error processing query: {str(e)}'
+                })
+            
+            # Send stream complete event
+            yield generate_sse_event({
+                'type': 'stream_complete',
+                'message': 'Stream completed'
+            })
+            yield generate_sse_keepalive()
+        
+        # Return streaming response
+        response = StreamingHttpResponse(
+            event_stream(),
+            content_type='text/event-stream'
+        )
+        response = setup_sse_response(response)
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error setting up stream query: {str(e)}")
+        # Return error as SSE stream
+        def error_stream():
+            yield generate_sse_event({
+                'type': 'error',
+                'message': f'Error setting up stream: {str(e)}'
+            })
+        
+        response = StreamingHttpResponse(
+            error_stream(),
+            content_type='text/event-stream'
+        )
+        response = setup_sse_response(response)
+        response.status_code = 500
+        return response
+
 #     @action(
 #         detail=False,
 #         methods=['POST'],
@@ -941,5 +1524,40 @@ def warm_cache_view(request):
         result = warm_cache(topics, diversity, num_stances)
         return Response({'success': True, 'results': result})
 
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def llm_status_view(request):
+    """Get status of local LLM services (Ollama and vLLM)"""
+    try:
+        status_data = get_local_llm_status()
+        return Response(status_data)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def test_llm_view(request):
+    """Test local LLM services with a sample query"""
+    try:
+        test_query = request.data.get('query', 'What are the benefits of renewable energy?')
+        
+        # Test query enhancement
+        enhancement = enhance_query_with_local_llm(test_query)
+        
+        # Test argument analysis
+        sample_argument = request.data.get('argument', 'Renewable energy reduces carbon emissions and provides sustainable power for the future.')
+        sample_stance = request.data.get('stance', 'Pro-Renewable Energy')
+        analysis = analyze_argument_with_local_llm(sample_argument, sample_stance)
+        
+        return Response({
+            'test_query': test_query,
+            'query_enhancement': enhancement,
+            'argument_analysis': analysis,
+            'llm_status': get_local_llm_status()
+        })
+        
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

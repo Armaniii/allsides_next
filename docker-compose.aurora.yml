@@ -23,14 +23,14 @@ services:
       context: ./allsides_next/frontend
       dockerfile: Dockerfile
       args:
-        - NODE_ENV=${NODE_ENV:-development}
+        - NODE_ENV=${NODE_ENV:-production}
     ports:
       - "3000:3000"
     env_file:
       - .env
     environment:
-      - NEXT_PUBLIC_API_URL=http://34.134.51.8:9000/api
-      - NODE_ENV=${NODE_ENV:-development}
+      - NEXT_PUBLIC_API_URL=http://your-ec2-public-ip:9000/api
+      - NODE_ENV=${NODE_ENV:-production}
       - HOSTNAME=0.0.0.0
       - NEXT_PRIVATE_HOST=0.0.0.0
     depends_on:
@@ -44,7 +44,7 @@ services:
       context: ./allsides_next/backend
       dockerfile: Dockerfile
       args:
-        - ENVIRONMENT=${NODE_ENV:-development}
+        - ENVIRONMENT=${NODE_ENV:-production}
         - OPENAI_API_KEY=${OPENAI_API_KEY}
         - TAVILY_API_KEY=${TAVILY_API_KEY}
         - GOOGLE_API_KEY=${GOOGLE_API_KEY}
@@ -69,11 +69,11 @@ services:
       - .env
     environment:
       - DEBUG=${DEBUG:-False}
-      - SECRET_KEY=${SECRET_KEY:-django-insecure-development-key}
-      - POSTGRES_DB=${POSTGRES_DB:-allsides_db}
-      - POSTGRES_USER=${POSTGRES_USER:-allsides_user}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-allsides_password}
-      - DATABASE_URL=postgres://${POSTGRES_USER:-allsides_user}:${POSTGRES_PASSWORD:-allsides_password}@db:5432/${POSTGRES_DB:-allsides_db}
+      - SECRET_KEY=${SECRET_KEY}
+      - POSTGRES_DB=${AURORA_DB_NAME}
+      - POSTGRES_USER=${AURORA_USER}
+      - POSTGRES_PASSWORD=${AURORA_PASSWORD}
+      - DATABASE_URL=postgres://${AURORA_USER}:${AURORA_PASSWORD}@${AURORA_ENDPOINT}:${AURORA_PORT}/${AURORA_DB_NAME}?sslmode=${AURORA_SSL_MODE}
       - ALLOWED_HOSTS=*
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - TAVILY_API_KEY=${TAVILY_API_KEY}
@@ -82,31 +82,17 @@ services:
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_HOST=${LANGFUSE_HOST}
-      - REDIS_HOST=redis
+      - REDIS_HOST=${REDIS_HOST:-redis}
       - OLLAMA_HOST=ollama:11434
       - OLLAMA_API_URL=http://ollama:11434/api
       - VLLM_API_URL=http://vllm:8000/v1
     depends_on:
-      - db
       - redis
       - ollama
     networks:
       - app_network
 
-  db:
-    image: postgres:15-alpine
-    volumes:
-      - postgres_data:/var/lib/postgresql/data/
-      - ./backups:/backups
-    env_file:
-      - .env
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB:-allsides_db}
-      - POSTGRES_USER=${POSTGRES_USER:-allsides_user}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-allsides_password}
-    networks:
-      - app_network
-
+  # Local Redis - keep if not using ElastiCache
   redis:
     image: redis:latest
     ports:
@@ -114,21 +100,6 @@ services:
     command: redis-server --appendonly yes --save 60 1 --save 300 100
     volumes:
       - redis_data:/data
-    networks:
-      - app_network
-
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    environment:
-      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL:-admin@admin.com}
-      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD:-admin}
-      - PGADMIN_CONFIG_SERVER_MODE=False
-    ports:
-      - "5050:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    depends_on:
-      - db
     networks:
       - app_network
 
@@ -214,14 +185,13 @@ services:
           memory: 8G
 
 volumes:
-  postgres_data:
   static_volume:
   media_volume:
   redis_data:
-  pgadmin_data:
   ollama_data:
   vllm_cache: 
+  # Removed postgres_data and pgadmin_data volumes
 
 networks:
   app_network:
-    driver: bridge 
+    driver: bridge

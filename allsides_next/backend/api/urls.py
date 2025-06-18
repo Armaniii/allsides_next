@@ -19,13 +19,18 @@ urlpatterns = [
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     # Registration endpoint
     path('register/', views.RegisterView.as_view(), name='register'),
+    # Streaming endpoint - standalone view to avoid DRF content negotiation issues
+    path('queries/stream/', views.stream_query_view, name='stream-query'),
     # Cache management endpoints
     path('cache/stats/', views.cache_statistics, name='cache_statistics'),
     path('cache/optimize/', views.optimize_cache_view, name='optimize_cache'),
     path('cache/warm/', views.warm_cache_view, name='warm_cache'),
     path('cache-stats/', views.get_cache_stats, name='cache-stats'),
-    # Research API endpoints
-    path('research/', include('api.research.urls')),
+    # Local LLM endpoints
+    path('llm/status/', views.llm_status_view, name='llm_status'),
+    path('llm/test/', views.test_llm_view, name='llm_test'),
+    # Research API endpoints (disabled - open_deep_research dependency removed)
+    # path('research/', include('api.research.urls')),
     # Include router URLs last to avoid conflicts
     path('', include(router.urls)),
 ]

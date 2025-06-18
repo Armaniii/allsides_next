@@ -120,14 +120,48 @@ const SupportingArgumentsModalMain: React.FC<ModalProps> = ({
   );
 };
 
+interface EvidenceItem {
+  quote: string;
+  citation_id: number;
+  reasoning: string;
+  stance: 'supports' | 'refutes';
+  url: string;
+  domain: string;
+  formatted: string;
+}
+
+interface EvidenceMetadata {
+  supporting_evidence_count: number;
+  refuting_evidence_count: number;
+  total_evidence_count: number;
+  primary_sources: number;
+  secondary_sources: number;
+}
+
+interface DetailedEvidence {
+  supporting: EvidenceItem[];
+  refuting: EvidenceItem[];
+}
+
 interface Stance {
   stance: string;
-  core_argument: string;
   supporting_arguments: string[];
+  references?: any[];
+  evidence_metadata?: EvidenceMetadata;
+  detailed_evidence?: DetailedEvidence;
+  core_argument_summary?: string;
+  source_analysis?: {
+    average_trust: number;
+    distribution: Record<string, { count: number; percentage: number }>;
+    trust_distribution: { high: number; medium: number; low: number };
+    biases: string[];
+  };
 }
 
 interface QueryResponse {
   arguments: Stance[];
+  references?: any[]; // Add references to match backend response
+  follow_up_questions?: string[]; // Add follow-up questions
 }
 
 interface QueryData {
@@ -164,6 +198,8 @@ export default function HomePage() {
   const [stanceCount, setStanceCount] = useState(3); // Default to 3 stances
   const [lastMouseActivity, setLastMouseActivity] = useState<number>(Date.now());
   const [isLimitReached, setIsLimitReached] = useState(false);
+  const [progressMessages, setProgressMessages] = useState<string[]>([]);
+  const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
 
   const topicGroups = [
     "Politics",
@@ -220,8 +256,11 @@ export default function HomePage() {
     staleTime: 30000, // Consider data fresh for 30 seconds
   });
 
-  const mutation = useMutation({
-    mutationFn: async (data: { query_text: string; diversity_score: number; num_stances: number }) => {
+  const mutation = useMutation<Query, Error, { query_text: string; diversity_score: number; num_stances: number }>({
+    // Set mutation timeout to 10 minutes for extended processing
+    networkMode: 'always',
+    gcTime: 600000, // 10 minutes garbage collection time
+    mutationFn: async (data: { query_text: string; diversity_score: number; num_stances: number }): Promise<Query> => {
       // Check if we have remaining queries before attempting
       if (user && user.daily_query_count >= user.daily_query_limit) {
         throw new Error('Daily query limit reached');
@@ -229,27 +268,52 @@ export default function HomePage() {
 
       try {
         console.log('📤 Sending query:', { ...data });
-        const response = await apiQueries.create({ ...data });
-        console.log('📥 Received response:', response);
         
-        // Validate and normalize response structure
-        if (!response || !response.response) {
-          console.error('Invalid response structure:', response);
-          throw new Error('Invalid response from server');
-        }
+        // Start progress tracking
+        setProcessingStartTime(Date.now());
+        setProgressMessages(['🔍 Initializing search...']);
+        setProcessingQuery(data.query_text);
+        
+        // Use streaming API instead of hardcoded messages
+        return new Promise<Query>((resolve, reject) => {
+          apiQueries.createStream(
+            { ...data },
+            // onProgress callback
+            (message: string) => {
+              setProgressMessages(prev => [...prev, message]);
+            },
+            // onComplete callback
+            (query: Query) => {
+              console.log('📥 Received streaming response:', query);
+              
+              // Validate and normalize response structure
+              if (!query || !query.response) {
+                console.error('Invalid response structure:', query);
+                reject(new Error('Invalid response from server'));
+                return;
+              }
 
-        // Ensure arguments array exists and is properly structured
-        if (!Array.isArray(response.response.arguments)) {
-          console.error('Invalid arguments structure:', response.response);
-          throw new Error('Invalid arguments structure from server');
-        }
+              // Ensure arguments array exists and is properly structured
+              if (!Array.isArray(query.response.arguments)) {
+                console.error('Invalid arguments structure:', query.response);
+                reject(new Error('Invalid arguments structure from server'));
+                return;
+              }
 
-        // Update user data immediately after successful query
-        if (user) {
-          user.daily_query_count = (user.daily_query_count || 0) + 1;
-        }
+              // Update user data immediately after successful query
+              if (user) {
+                user.daily_query_count = (user.daily_query_count || 0) + 1;
+              }
 
-        return response;
+              resolve(query);
+            },
+            // onError callback
+            (error: string) => {
+              console.error('❌ Streaming query error:', error);
+              reject(new Error(error));
+            }
+          );
+        });
       } catch (error) {
         console.error('❌ Query error:', error);
         const errorMessage = error instanceof Error 
@@ -260,6 +324,11 @@ export default function HomePage() {
     },
     onSuccess: async (data: Query) => {
       console.log('✅ Query successful:', data);
+    
+      // Clear progress messages
+      setProgressMessages([]);
+      setProcessingStartTime(null);
+      setProcessingQuery('');
     
       if (!data.response?.arguments) {
         console.error('Missing arguments in response:', data);
@@ -302,6 +371,12 @@ export default function HomePage() {
     },
     onError: (error: any) => {
       console.error('❌ Query failed:', error);
+      
+      // Clear progress messages
+      setProgressMessages([]);
+      setProcessingStartTime(null);
+      setProcessingQuery('');
+      
       if (error.message === 'Daily query limit reached') {
         const resetTime = new Date();
         resetTime.setHours(24, 0, 0, 0); // Next midnight
@@ -346,6 +421,10 @@ export default function HomePage() {
     }
     
     console.log('🚀 Submitting query:', text);
+    
+    // Clear previous query results to show a blank screen for new progress updates
+    setCurrentQuery(null);
+    
     mutation.mutate({
       query_text: text,
       diversity_score: diversityScore[0],
@@ -588,7 +667,7 @@ export default function HomePage() {
                 }}
                 className="relative group"
               >
-                <div className={`relative bg-white/95 backdrop-blur-sm rounded-2xl shadow-md hover:shadow-lg transition-all duration-300 p-6 h-full border border-gray-100 ${
+                <div className={`relative bg-[#FDFCFB]/95 backdrop-blur-sm rounded-2xl shadow-md hover:shadow-lg transition-all duration-300 p-6 h-full border border-gray-100 ${
                   query.response.arguments.length > 4 ? 'text-sm' : ''
                 }`}>
                   {/* Stance Header */}
@@ -601,14 +680,9 @@ export default function HomePage() {
                     <div className="flex-grow h-px bg-gradient-to-r from-purple-200 to-transparent"></div>
                   </div>
 
-                  {/* Core Argument */}
+                  {/* Spacer - position is already shown in header */}
                   <div className="mb-6">
-                    <p className={`text-gray-700 font-medium leading-relaxed argument-text ${
-                      query.response.arguments.length > 4 ? 'text-sm' : ''
-                    }`}>
-                      {argument.core_argument || 'No core argument provided'}
-                    </p>
-                    <div className="h-0.5 bg-gradient-to-r from-purple-500/30 to-indigo-500/30 w-full mt-4 rounded-full"></div>
+                    <div className="h-0.5 bg-gradient-to-r from-purple-500/30 to-indigo-500/30 w-full rounded-full"></div>
                   </div>
 
                   {/* Learn More Button */}
@@ -895,16 +969,24 @@ export default function HomePage() {
   };
 
   const openModal = (argument: any) => {
-    // Ensure supporting_arguments is always an array
+    // Debug: Log argument structure (remove in production)
+    // console.log('🔍 Opening modal with argument:', argument);
+    // console.log('🔍 Evidence metadata:', argument.evidence_metadata);
+    // console.log('🔍 Detailed evidence:', argument.detailed_evidence);
+    
+    // Ensure supporting_arguments is always an array and include references
     const normalizedArgument = {
       stance: argument.stance || '',
-      core_argument: argument.core_argument || '',
       supporting_arguments: Array.isArray(argument.supporting_arguments) 
         ? argument.supporting_arguments 
         : argument.supporting_arguments 
           ? [argument.supporting_arguments]
-          : []
+          : [],
+      references: argument.references || [],
+      evidence_metadata: argument.evidence_metadata,
+      detailed_evidence: argument.detailed_evidence
     };
+    // console.log('🔍 Normalized argument:', normalizedArgument);
     setSelectedArgument(normalizedArgument);
   };
 
@@ -946,6 +1028,21 @@ export default function HomePage() {
       setTimeout(() => setQueryLimitAnimation(false), 1000);
     }
   }, [mutation.isSuccess]);
+
+  // Add effect to update elapsed time counter
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [processingQuery, setProcessingQuery] = useState('');
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (processingStartTime) {
+      interval = setInterval(() => {
+        setElapsedTime(Math.floor((Date.now() - processingStartTime) / 1000));
+      }, 1000);
+    } else {
+      setElapsedTime(0);
+    }
+    return () => clearInterval(interval);
+  }, [processingStartTime]);
 
   const handleStanceCountChange = (count: number) => {
     setStanceCount(count);
@@ -1008,7 +1105,7 @@ export default function HomePage() {
                 key={query.id}
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
-                className="group p-4 rounded-xl border border-purple-100 hover:border-purple-200 transition-all duration-300 cursor-pointer bg-white"
+                className="group p-4 rounded-xl border border-purple-100 hover:border-purple-200 transition-all duration-300 cursor-pointer bg-gray-50"
                 onClick={() => {
                   setCurrentQuery(query);
                   setQueryText('');
@@ -1075,36 +1172,119 @@ export default function HomePage() {
       {/* Main Content */}
       <div className={`flex-1 transition-all duration-300 ${isHistorySidebarOpen ? 'ml-80' : 'ml-0'}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-32">
-          {/* Welcome Watermark */}
+          {/* Welcome Watermark or Progress Messages */}
           {!currentQuery && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 0.7, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="text-center flex flex-col items-center gap-8"
-              >
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 0.7 }}
-                  className="h-24 sm:h-28 md:h-32 lg:h-40 aspect-square relative"
-                >
-                  <Image
-                    src="/logo.webp"
-                    alt="AllStances Logo"
-                    fill
-                    className="object-contain"
-                  />
-                </motion.div>
-                <div>
-                  <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-gray-300">
-                    Hi, {user?.first_name || user?.username || 'there'}!
-                  </h1>
-                  <p className="mt-4 text-lg sm:text-xl md:text-2xl text-gray-300">
-                    Welcome to AllStances!
-                  </p>
-                </div>
-              </motion.div>
+              <AnimatePresence mode="wait">
+                {mutation.isPending && progressMessages.length > 0 ? (
+                  <motion.div
+                    key="progress"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="text-center flex flex-col items-center gap-6 max-w-2xl mx-auto px-8"
+                  >
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                      className="h-16 w-16"
+                    >
+                      <Loader2 className="h-16 w-16 text-purple-600" />
+                    </motion.div>
+                    
+                    <div className="space-y-3">
+                      <h2 className="text-2xl font-semibold text-gray-700">Processing your query...</h2>
+                      <p className="text-lg text-gray-600">"{processingQuery || 'Your query'}"</p>
+                      
+                      {/* Fixed Height Progress Stream */}
+                      <div className="mt-6 h-20 overflow-hidden relative bg-gray-50/50 rounded-xl px-4">
+                        <div className="flex flex-col justify-end h-full py-2">
+                          {progressMessages.slice(-3).map((message, index) => {
+                            const totalMessages = progressMessages.slice(-3).length;
+                            const messageIndex = totalMessages - 1 - index;
+                            
+                            // Opacity: most recent (index 0) = 1.0, second recent = 0.8, oldest = 0.3
+                            const opacity = messageIndex === 0 ? 1.0 : messageIndex === 1 ? 0.8 : 0.3;
+                            
+                            return (
+                              <motion.div
+                                key={progressMessages.length - 3 + index}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ 
+                                  opacity: opacity,
+                                  y: 0
+                                }}
+                                exit={{ opacity: 0, y: -8 }}
+                                transition={{ 
+                                  duration: 0.3,
+                                  ease: "easeOut"
+                                }}
+                                className={`flex items-center gap-2 text-sm transition-all duration-300 ${
+                                  messageIndex === 0 
+                                    ? 'text-purple-700 font-medium' 
+                                    : messageIndex === 1 
+                                      ? 'text-gray-600' 
+                                      : 'text-gray-400'
+                                }`}
+                                style={{
+                                  transform: `translateY(${messageIndex * -2}px)`,
+                                }}
+                              >
+                                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                  messageIndex === 0 
+                                    ? 'bg-purple-500 animate-pulse' 
+                                    : messageIndex === 1 
+                                      ? 'bg-gray-400' 
+                                      : 'bg-gray-300'
+                                }`} />
+                                <span className="leading-tight">{message}</span>
+                              </motion.div>
+                            );
+                          })}
+                        </div>
+                        
+                        {/* Subtle gradient fade effect */}
+                        <div className="absolute top-0 left-0 right-0 h-3 bg-gradient-to-b from-gray-50/80 to-transparent pointer-events-none" />
+                      </div>
+                      
+                      {processingStartTime && (
+                        <div className="mt-6 text-sm text-gray-500">
+                          Elapsed time: {elapsedTime}s
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="welcome"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 0.7, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="text-center flex flex-col items-center gap-8"
+                  >
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 0.7 }}
+                      className="h-24 sm:h-28 md:h-32 lg:h-40 aspect-square relative"
+                    >
+                      <Image
+                        src="/logo.webp"
+                        alt="AllStances Logo"
+                        fill
+                        className="object-contain"
+                      />
+                    </motion.div>
+                    <div>
+                      <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-gray-300">
+                        Hi, {user?.first_name || user?.username || 'there'}!
+                      </h1>
+                      <p className="mt-4 text-lg sm:text-xl md:text-2xl text-gray-300">
+                        Welcome to AllStances!
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           )}
 
@@ -1173,6 +1353,9 @@ export default function HomePage() {
                 arguments={currentQuery.response.arguments}
                 queryId={currentQuery.id}
                 onAllStarsUpdate={handleAllStarsUpdate}
+                globalReferences={currentQuery.response.references}
+                followUpQuestions={currentQuery.response.follow_up_questions}
+                onNewQuery={(question) => submitQuery(question)}
               />
             </div>
           )}
@@ -1208,10 +1391,14 @@ export default function HomePage() {
               isOpen={!!selectedArgument}
               onClose={() => setSelectedArgument(null)}
               stance={selectedArgument.stance}
-              coreArgument={selectedArgument.core_argument}
               supportingArguments={selectedArgument.supporting_arguments}
+              references={selectedArgument.references}
               queryId={currentQuery?.id || 0}
               onAllStarsUpdate={handleAllStarsUpdate}
+              evidenceMetadata={selectedArgument.evidence_metadata}
+              detailedEvidence={selectedArgument.detailed_evidence}
+              core_argument_summary={selectedArgument.core_argument_summary}
+              source_analysis={selectedArgument.source_analysis}
             />
           )}
 
@@ -1235,7 +1422,7 @@ export default function HomePage() {
             onChange={(e) => setQueryText(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="What would you like to learn about today?"
-            className="w-full pl-4 pr-[4.5rem] sm:pl-5 sm:pr-32 py-3 sm:py-4 bg-white/95 backdrop-blur-sm rounded-2xl shadow-lg border border-purple-100/50 focus:border-purple-300/50 focus:ring-2 focus:ring-purple-500/30 transition-all duration-300 outline-none text-gray-700 text-sm sm:text-base"
+            className="w-full pl-4 pr-[7rem] sm:pr-[9rem] py-3 sm:py-4 bg-white/95 backdrop-blur-sm rounded-2xl shadow-lg border border-purple-100/50 focus:border-purple-300/50 focus:ring-2 focus:ring-purple-500/30 transition-all duration-300 outline-none text-gray-700 text-sm sm:text-base"
           />
           {/* Information Message */}
           <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 flex items-center whitespace-nowrap">
@@ -1248,64 +1435,6 @@ export default function HomePage() {
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 sm:gap-3">
             {user && (
               <>
-                <div 
-                  className="relative hidden sm:block"
-                  onMouseEnter={() => setShowStanceSelector(true)}
-                  onMouseLeave={(e) => {
-                    const relatedTarget = e.relatedTarget as HTMLElement;
-                    if (!relatedTarget?.closest('.settings-menu')) {
-                      setShowStanceSelector(false);
-                    }
-                  }}
-                >
-                  <motion.button
-                    className="p-1.5 sm:p-2 hover:bg-purple-50 rounded-lg transition-colors"
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                  >
-                    <Cog6ToothIcon className="h-4 w-4 sm:h-5 sm:w-5 text-purple-600" />
-                  </motion.button>
-
-                  <AnimatePresence>
-                    {showStanceSelector && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 10 }}
-                        className="settings-menu absolute bottom-full right-0 mb-2 p-3 bg-white rounded-xl shadow-lg border border-purple-100"
-                        style={{ zIndex: 9999 }}
-                        onMouseLeave={() => setShowStanceSelector(false)}
-                      >
-                        <div className="mb-2 text-sm font-medium text-gray-600">
-                          Number of stances
-                        </div>
-                        <div className="flex gap-2">
-                          {[2, 3, 4, 5, 6, 7].map((num) => (
-                            <motion.button
-                              key={num}
-                              onClick={() => {
-                                handleStanceCountChange(num);
-                                setTimeout(() => setShowStanceSelector(false), 200);
-                              }}
-                              whileHover={{ scale: 1.05 }}
-                              whileTap={{ scale: 0.95 }}
-                              className={`
-                                w-8 h-8 rounded-lg flex items-center justify-center text-sm font-medium
-                                transition-all duration-200
-                                ${num === stanceCount
-                                  ? 'bg-purple-600 text-white shadow-md'
-                                  : 'bg-purple-50 text-purple-600 hover:bg-purple-100'
-                                }
-                              `}
-                            >
-                              {num}
-                            </motion.button>
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
 
                 <motion.div
                   animate={{

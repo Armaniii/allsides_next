@@ -76,7 +76,7 @@ const api = axios.create({
     'Content-Type': 'application/json',
     'Accept': 'application/json',
   },
-  timeout: 60000, // 60 seconds
+  timeout: 600000, // 10 minutes (600 seconds) - extended for Junto Evidence API processing
   withCredentials: true // Enable credentials for cross-origin requests
 });
 

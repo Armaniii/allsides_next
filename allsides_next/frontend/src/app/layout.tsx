@@ -1,12 +1,32 @@
 'use client';
 
-import { Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { useState } from 'react';
 
-const inter = Inter({ subsets: ['latin'] });
+const etBook = localFont({
+  src: [
+    {
+      path: '../../public/fonts/et-book/et-book-roman.woff',
+      weight: '400',
+      style: 'normal',
+    },
+    {
+      path: '../../public/fonts/et-book/et-book-bold.woff',
+      weight: '700',
+      style: 'normal',
+    },
+    {
+      path: '../../public/fonts/et-book/et-book-italic.woff',
+      weight: '400',
+      style: 'italic',
+    },
+  ],
+  display: 'swap',
+  variable: '--font-et-book',
+});
 
 // export const metadata = {
 //   title: 'AllSides',
@@ -28,12 +48,12 @@ export default function RootLayout({
   }));
 
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={etBook.variable} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </head>
-      <body className={inter.className} suppressHydrationWarning>
+      <body className={etBook.className} suppressHydrationWarning>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
             <main className="min-h-screen">

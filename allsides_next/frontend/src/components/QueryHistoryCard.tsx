@@ -21,6 +21,7 @@ const QueryHistoryCard: React.FC<QueryHistoryCardProps> = ({
   onArgumentClick,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
+  
 
   const highlightText = (text: string) => {
     if (!searchTerm?.trim()) return text;
@@ -109,7 +110,7 @@ const QueryHistoryCard: React.FC<QueryHistoryCardProps> = ({
             className="overflow-hidden"
           >
             <div className="p-6 space-y-6">
-              {query.response.arguments.map((argument, index) => (
+              {query.response.arguments.map((argument: any, index: number) => (
                 <motion.div
                   key={index}
                   initial={{ opacity: 0, x: -20 }}
@@ -138,7 +139,7 @@ const QueryHistoryCard: React.FC<QueryHistoryCardProps> = ({
 
                   {/* Supporting Arguments */}
                   <div className="ml-4 space-y-3">
-                    {argument.supporting_arguments.map((supporting, sIndex) => (
+                    {argument.supporting_arguments.map((supporting: any, sIndex: number) => (
                       <motion.div
                         key={sIndex}
                         initial={{ opacity: 0, x: -20 }}
@@ -155,6 +156,40 @@ const QueryHistoryCard: React.FC<QueryHistoryCardProps> = ({
                       </motion.div>
                     ))}
                   </div>
+
+                  {/* Key Perspectives Tags */}
+                  {argument.key_perspectives && argument.key_perspectives.length > 0 && (
+                    <div className="mt-4 pt-3 border-t border-gray-200">
+                      <div className="flex items-center gap-1 mb-2">
+                        <span className="text-xs text-gray-500 uppercase tracking-wide font-medium">Key Perspectives</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {argument.key_perspectives.slice(0, 3).map((perspective: string, perspIndex: number) => {
+                          const getIcon = (perspective: string) => {
+                            if (perspective.includes('Mainstream')) return '🌐';
+                            if (perspective.includes('Critical')) return '🔥';
+                            if (perspective.includes('Technical')) return '🔬';
+                            if (perspective.includes('Economic')) return '💼';
+                            if (perspective.includes('Emerging')) return '🚀';
+                            return '💡';
+                          };
+                          
+                          return (
+                            <motion.span
+                              key={perspIndex}
+                              initial={{ scale: 0, opacity: 0 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              transition={{ delay: 0.2 + perspIndex * 0.1 }}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-700 rounded-full text-xs font-medium border border-purple-100"
+                            >
+                              <span className="text-xs">{getIcon(perspective)}</span>
+                              <span className="truncate max-w-20">{perspective.split(' ')[0]}</span>
+                            </motion.span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </motion.div>
               ))}
             </div>

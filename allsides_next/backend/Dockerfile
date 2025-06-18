@@ -62,7 +62,8 @@ RUN if [ "$ENVIRONMENT" = "production" ] ; then \
 RUN pip install open-deep-research>=0.0.10 langgraph>=0.2.55 langchain>=0.1.0 \
         langchain-core>=0.1.11 langchain-community>=0.3.9 langchain-openai>=0.3.7 \
         python-dotenv>=1.0.1 redis>=5.0.1 requests>=2.32.3 nest-asyncio>=1.5.8 asgiref>=3.7.2 \
-        langchain-ollama==0.2.2 langchain_core>=0.1.20 pydantic>=1.10.8
+        langchain-ollama==0.2.2 langchain_core>=0.1.20 pydantic>=1.10.8 \
+        websockets>=12.0 httpx>=0.25.0
 
 # Copy application code
 COPY . .
@@ -75,7 +76,7 @@ RUN if [ "$ENVIRONMENT" = "production" ] ; then \
 
 # Set the command based on environment
 CMD if [ "$ENVIRONMENT" = "production" ] ; then \
-        gunicorn --bind 0.0.0.0:8000 --workers 4 --threads 4 core.wsgi:application ; \
+        gunicorn --bind 0.0.0.0:8000 --workers 4 --threads 4 --timeout 600 core.wsgi:application ; \
     else \
         python manage.py runserver 0.0.0.0:8000 ; \
     fi 

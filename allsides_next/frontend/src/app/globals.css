@@ -2,33 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ET-Book Font Face Declarations */
+@font-face {
+  font-family: 'ET Book';
+  src: url('/fonts/et-book/et-book-roman.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ET Book';
+  src: url('/fonts/et-book/et-book-bold.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ET Book';
+  src: url('/fonts/et-book/et-book-italic.woff') format('woff');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
 :root {
   /* Core colors */
-  --foreground-rgb: 17, 24, 39;
-  --background-start-rgb: 249, 250, 251;
-  --background-end-rgb: 243, 244, 246;
+  --foreground-rgb: 45, 55, 72;
+  --background-start-rgb: 250, 249, 247;
+  --background-end-rgb: 245, 243, 240;
   
   /* Brand colors */
-  --primary: 79, 70, 229;
-  --primary-light: 99, 102, 241;
-  --primary-dark: 67, 56, 202;
+  --primary: 124, 122, 237;
+  --primary-light: 155, 153, 245;
+  --primary-dark: 107, 104, 214;
   
   /* Accent colors */
-  --accent-purple: 147, 51, 234;
-  --accent-rose: 225, 29, 72;
-  --accent-amber: 245, 158, 11;
+  --accent-purple: 183, 148, 244;
+  --accent-rose: 246, 135, 179;
+  --accent-amber: 251, 211, 141;
   
   /* Neutral colors */
-  --gray-50: 249, 250, 251;
-  --gray-100: 243, 244, 246;
-  --gray-200: 229, 231, 235;
-  --gray-300: 209, 213, 219;
-  --gray-400: 156, 163, 175;
-  --gray-500: 107, 114, 128;
-  --gray-600: 75, 85, 99;
-  --gray-700: 55, 65, 81;
-  --gray-800: 31, 41, 55;
-  --gray-900: 17, 24, 39;
+  --gray-50: 250, 249, 247;
+  --gray-100: 245, 243, 240;
+  --gray-200: 235, 231, 226;
+  --gray-300: 221, 216, 208;
+  --gray-400: 179, 172, 160;
+  --gray-500: 139, 129, 117;
+  --gray-600: 107, 97, 85;
+  --gray-700: 82, 74, 66;
+  --gray-800: 61, 55, 51;
+  --gray-900: 45, 55, 72;
 }
 
 /* Base styles */
@@ -48,35 +73,45 @@ html {
 body {
   min-height: 100%;
   color: rgb(var(--gray-900));
-  background: linear-gradient(
-    135deg,
-    rgb(var(--background-start-rgb)) 0%,
-    rgb(var(--background-end-rgb)) 100%
-  );
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  background: rgb(var(--gray-200));
+  font-feature-settings: "kern", "liga", "clig", "calt";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  line-height: 1.4;
 }
 
-/* Typography */
+/* Typography with ET-Book optimizations */
 @layer base {
   h1 {
     @apply text-4xl font-bold tracking-tight text-gray-900 mb-6;
+    line-height: 1.2;
   }
   h2 {
     @apply text-3xl font-semibold tracking-tight text-gray-800 mb-4;
+    line-height: 1.25;
   }
   h3 {
     @apply text-2xl font-semibold text-gray-800 mb-3;
+    line-height: 1.3;
   }
   h4 {
     @apply text-xl font-medium text-gray-800 mb-2;
+    line-height: 1.35;
   }
   p {
-    @apply text-gray-600 leading-relaxed mb-4;
+    @apply text-gray-600 mb-4;
+    line-height: 1.6;
+    hanging-punctuation: first last;
   }
   a {
     @apply text-indigo-600 hover:text-indigo-700 transition-colors duration-200;
+  }
+  
+  /* Enhanced text rendering for ET-Book */
+  .et-book-text {
+    font-variant-numeric: oldstyle-nums;
+    font-variant-ligatures: common-ligatures contextual;
+    text-rendering: optimizeLegibility;
   }
 }
 
@@ -89,25 +124,25 @@ body {
   }
 
   .btn-primary {
-    @apply btn bg-indigo-600 text-white hover:bg-indigo-700 
-           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500;
+    @apply btn bg-primary text-white hover:bg-primary-dark 
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgb(var(--primary))];
   }
 
   .btn-secondary {
     @apply btn bg-white text-gray-700 border border-gray-300 
-           hover:bg-gray-50 hover:text-gray-900
-           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500;
+           hover:bg-gray-100 hover:text-gray-900
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgb(var(--primary))];
   }
 
   .btn-danger {
-    @apply btn bg-rose-600 text-white hover:bg-rose-700
-           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-rose-500;
+    @apply btn bg-accent-rose text-white hover:bg-accent-rose/90
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgb(var(--accent-rose))];
   }
 
   /* Cards */
   .card {
-    @apply bg-white rounded-xl shadow-sm hover:shadow-md transition-all duration-200
-           border border-gray-100;
+    @apply bg-gray-50 rounded-xl shadow-sm hover:shadow-md transition-all duration-200
+           border border-gray-200;
   }
 
   .card-hover {
@@ -117,7 +152,7 @@ body {
   /* Form elements */
   .input {
     @apply block w-full px-4 py-2 rounded-lg border-gray-300 
-           shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500
+           shadow-sm focus:ring-2 focus:ring-[rgb(var(--primary))] focus:border-[rgb(var(--primary))]
            placeholder-gray-400 transition-colors duration-200;
   }
 
@@ -135,15 +170,15 @@ body {
   }
 
   .badge-purple {
-    @apply bg-purple-100 text-purple-800;
+    @apply bg-[rgb(var(--accent-purple)/0.2)] text-[rgb(var(--accent-purple))];
   }
 
   .badge-blue {
-    @apply bg-blue-100 text-blue-800;
+    @apply bg-[rgb(var(--primary)/0.2)] text-[rgb(var(--primary))];
   }
 
   .badge-green {
-    @apply bg-green-100 text-green-800;
+    @apply bg-[rgb(var(--accent-amber)/0.2)] text-[rgb(var(--accent-amber))];
   }
 }
 

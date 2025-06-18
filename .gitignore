@@ -148,4 +148,20 @@ coverage/
 .dockerignore
 
 # Certificates
-certbot/ 
+certbot/
+
+# Database backups
+*.sql
+db_backup_*
+mediafiles_backup_*
+redis_backup.rdb
+
+# Aurora migration files (keep templates)
+.env.aurora
+
+# Additional cleanup patterns
+*.pyc
+__pycache__/
+venv/
+.venv/
+node_modules/ 
