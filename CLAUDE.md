@@ -4,19 +4,47 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AllSides Next is a multi-tier web application that generates diverse political perspectives on user queries. It consists of:
-- **Backend**: Django REST API as WSGI with PostgreSQL database 
-- **Frontend**: Next.js React application
-- **Infrastructure**: Docker Compose with Nginx reverse proxy, Redis cache, and pgAdmin
-- **Logging**: LangFuse to track API and LLM calls
+AllSides Next is a multi-tier web application that generates diverse political perspectives on user queries using AI. It consists of:
+- **Backend**: Django REST API with Gunicorn and PostgreSQL database
+- **Frontend**: Next.js React application with TypeScript
+- **Infrastructure**: Docker Compose orchestration with Nginx reverse proxy, Redis cache, and pgAdmin
+- **AI/ML Services**: Ollama and vLLM for local LLM capabilities
+- **Monitoring**: LangFuse to track API and LLM calls
 - **Research Module**: LangGraph integration for deep research reports
 
+## Key Features
+- Local LLM enhancement (query formatting, follow-up questions, argument summarization, source analysis)
+- Multi-perspective argument generation across political spectrum
+- Source credibility analysis and bias detection
+- User authentication and rating system
 
-# Workflow
-- Be sure to typecheck when you’re done making a series of code changes
-- Prefer running single tests, and not the whole test suite, for performance
-## Memories
 
-- Create a TODO.md where you will always update with features that you have yet to implement, updated progress for said features everytime you make progress on implementation and the final status (completed). You should update this when i instruct you too, or when you realize that your are implementing a feature that requires deeper thought.
-- Always Use "docker compose" without the hyphen
+# Workflow Guidelines
+
+## Code Quality
+- Always run typechecking when you're done making code changes
+- Prefer running single tests, not the whole test suite, for performance
+- Use Black for Python formatting, ESLint for TypeScript
+- Follow existing code patterns and conventions
+
+## Docker Commands
+- Always use "docker compose" without the hyphen
+- Use `docker compose logs -f [service]` to check service status
+- AI services (Ollama/vLLM) may take 1-5 minutes to start
+
+## Task Management
+- Update TODO.md when implementing complex features
+- Mark progress and completion status for all tracked tasks
+- Use TODO.md for features requiring deeper thought or multi-step implementation
+
+## Development Process
+- Test locally with `docker compose up -d` before committing
+- Check AI service health: `curl localhost:11434/api/tags` (Ollama), `curl localhost:8001/v1/models` (vLLM)
+- Monitor resource usage: `docker stats` for memory/CPU usage
+
+## Important Files
+- `allsides_next/backend/api/main_v3.py`: Core query processing logic
+- `allsides_next/backend/api/llm_helpers.py`: Local LLM enhancement features
+- `TODO.md`: Active task tracking and feature progress
+- `LOCAL_LLM_INTEGRATION.md`: AI/ML service documentation
 

@@ -2,167 +2,349 @@
 
 ## Overview
 
-This guide covers the deployment setup for the AllSides Next application using Docker, Docker Compose, and Nginx. The application is designed to run as a set of containerized services with SSL encryption.
+AllSides Next is a multi-tier web application that generates diverse political perspectives using AI. This guide covers deployment using Docker Compose with integrated AI/ML services.
 
 ## Architecture
 
-The deployment uses the following components:
+The deployment consists of the following containerized services:
 
-- **Docker Compose**: Orchestrates all services
-- **Nginx**: Reverse proxy for routing and SSL termination
-- **Certbot**: Automatic SSL certificate management
-- **PostgreSQL**: Database for persistent storage
-- **Backend Container**: Django API service
-- **Frontend Container**: Next.js frontend service
+### Core Services
+- **Nginx**: Reverse proxy and static file serving (ports 9000:80, 8443:443)
+- **Frontend**: Next.js React application (port 3000)
+- **Backend**: Django REST API with Gunicorn
+- **PostgreSQL**: Primary database (internal port 5432)
+- **Redis**: Caching layer (port 6379)
 
-## Docker Compose Configuration
+### AI/ML Services
+- **Ollama**: Local LLM serving (port 11434)
+- **vLLM**: OpenAI-compatible model serving (port 8001)
 
-The main `docker-compose.yml` file defines all the services and their dependencies:
+### Management Tools
+- **pgAdmin**: Database administration UI (port 5050)
 
-### Services
+## Prerequisites
 
-1. **Backend (Django)**
-   - Builds from the backend Dockerfile
-   - Connected to the PostgreSQL database
-   - Exposes API endpoints
+- Docker Engine 20.10+
+- Docker Compose 2.0+
+- 16GB+ RAM recommended (for AI services)
+- 50GB+ free disk space
 
-2. **Frontend (Next.js)**
-   - Builds from the frontend Dockerfile
-   - Makes API calls to the backend
-   - Serves the user interface
+## Quick Start
 
-3. **Database (PostgreSQL)**
-   - Stores all application data
-   - Uses volumes for data persistence
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd allsides_next_project
+   ```
 
-4. **Nginx**
-   - Routes traffic to the appropriate services
-   - Handles SSL termination
-   - Serves static files
+2. **Create environment file**
+   ```bash
+   cp .env.example .env
+   ```
 
-5. **Certbot**
-   - Manages SSL certificates
-   - Performs automatic renewal
+3. **Configure environment variables** (see Environment Variables section)
+
+4. **Start all services**
+   ```bash
+   docker compose up -d
+   ```
+
+5. **Verify deployment**
+   ```bash
+   docker compose ps
+   ```
 
 ## Environment Variables
 
-The deployment requires several environment variables to be configured:
+Create a `.env` file in the project root with the following variables:
 
-### Backend Environment Variables
-
-- `DEBUG`: Enable/disable debug mode
-- `SECRET_KEY`: Django secret key
-- `ALLOWED_HOSTS`: List of allowed hosts
-- `DATABASE_URL`: PostgreSQL connection string
-- `CORS_ALLOWED_ORIGINS`: CORS configuration
-
-### Frontend Environment Variables
-
-- `NEXT_PUBLIC_API_URL`: URL of the backend API
-- `NODE_ENV`: Production/development environment
-
-## Deployment Steps
-
-1. **Initial Setup**
-
-   Clone the repository and navigate to the project directory:
-   ```bash
-   git clone <repository-url>
-   cd allsides_next
-   ```
-
-2. **Configure Environment Variables**
-
-   Create `.env` files for each service:
-   ```bash
-   cp .env.example .env
-   cp allsides_next/frontend/.env.example allsides_next/frontend/.env.local
-   cp allsides_next/backend/.env.example allsides_next/backend/.env
-   ```
-
-   Edit these files with your specific configuration values.
-
-3. **Start the Services**
-
-   Launch all services using Docker Compose:
-   ```bash
-   docker-compose up -d
-   ```
-
-4. **Initialize the Database**
-
-   Run migrations and create a superuser:
-   ```bash
-   docker-compose exec backend python manage.py migrate
-   docker-compose exec backend python manage.py createsuperuser
-   ```
-
-5. **Setup SSL Certificates**
-
-   Initialize SSL certificates with Certbot:
-   ```bash
-   docker-compose run --rm certbot certonly --webroot -w /var/www/certbot -d yourdomain.com
-   ```
-
-## Maintenance
-
-### Database Backups
-
-Regular database backups are stored in the `backups/` directory. To create a manual backup:
-
+### Database Configuration
 ```bash
-docker-compose exec db pg_dump -U postgres -d allsides > backups/backup-$(date +%Y%m%d%H%M%S).sql
+POSTGRES_DB=allsides_db
+POSTGRES_USER=allsides_user
+POSTGRES_PASSWORD=<secure-password>
 ```
 
-### SSL Certificate Renewal
-
-SSL certificates are automatically renewed by the Certbot service. To force a renewal:
-
+### Django Configuration
 ```bash
-docker-compose run --rm certbot renew
+DEBUG=False
+SECRET_KEY=<django-secret-key>
+ALLOWED_HOSTS=*
+NODE_ENV=production
 ```
 
-### Updating the Application
+### API Keys
+```bash
+OPENAI_API_KEY=<your-openai-key>
+TAVILY_API_KEY=<your-tavily-key>
+GOOGLE_API_KEY=<your-google-key>
+LINKUP_API_KEY=<your-linkup-key>
+```
 
-To update the application to the latest version:
+### LangFuse Monitoring
+```bash
+LANGFUSE_SECRET_KEY=<langfuse-secret>
+LANGFUSE_PUBLIC_KEY=<langfuse-public>
+LANGFUSE_HOST=<langfuse-host-url>
+```
 
-1. Pull the latest code:
-   ```bash
-   git pull
-   ```
+### pgAdmin Configuration
+```bash
+PGADMIN_DEFAULT_EMAIL=admin@admin.com
+PGADMIN_DEFAULT_PASSWORD=<pgadmin-password>
+```
 
-2. Rebuild and restart containers:
-   ```bash
-   docker-compose build
-   docker-compose up -d
-   ```
+## Service Details
+
+### Backend Service
+- **Command**: Runs migrations, collects static files, starts Gunicorn
+- **Workers**: 4 Gunicorn workers with 4 threads each
+- **Timeout**: 600 seconds for long-running AI operations
+- **Dependencies**: PostgreSQL, Redis, Ollama
+
+### Frontend Service
+- **Environment**: Next.js production build
+- **API URL**: Configured via NEXT_PUBLIC_API_URL
+- **Host**: Binds to 0.0.0.0 for container access
+
+### Redis Service
+- **Persistence**: AOF enabled with periodic saves
+- **Data Volume**: redis_data for persistence
+
+### Ollama Service
+- **CPU Mode**: Optimized for 4-core systems
+- **Memory**: 4-8GB allocated
+- **Models**: Stored in ollama_data volume
+- **Health Check**: Every 60 seconds
+
+### vLLM Service
+- **Model**: Microsoft DialoGPT-small (CPU mode)
+- **Memory**: 8GB limit
+- **Worker Method**: Ray with spawn
+- **Health Check**: Every 60 seconds with 5-minute startup
+
+## Deployment Commands
+
+### Start Services
+```bash
+# Start all services
+docker compose up -d
+
+# Start specific service
+docker compose up -d backend
+
+# View logs
+docker compose logs -f [service_name]
+```
+
+### Database Management
+```bash
+# Run migrations
+docker compose exec backend python manage.py migrate
+
+# Create superuser
+docker compose exec backend python manage.py createsuperuser
+
+# Access database shell
+docker compose exec db psql -U allsides_user -d allsides_db
+
+# Backup database
+docker compose exec db pg_dump -U allsides_user allsides_db > backups/backup-$(date +%Y%m%d%H%M%S).sql
+
+# Restore database
+docker compose exec -T db psql -U allsides_user allsides_db < backups/backup.sql
+```
+
+### Static Files
+```bash
+# Collect static files
+docker compose exec backend python manage.py collectstatic --noinput
+```
+
+### Service Management
+```bash
+# Restart service
+docker compose restart [service_name]
+
+# Stop all services
+docker compose down
+
+# Stop and remove volumes (CAUTION: deletes data)
+docker compose down -v
+
+# Rebuild service
+docker compose build [service_name]
+
+# Update and restart
+docker compose up -d --build
+```
+
+## Accessing Services
+
+- **Application**: http://localhost:9000
+- **pgAdmin**: http://localhost:5050
+- **Backend API**: http://localhost:9000/api (via Nginx)
+
+### pgAdmin Database Connection
+- Host: `db` (internal Docker network)
+- Port: `5432`
+- Username: `allsides_user`
+- Password: (from POSTGRES_PASSWORD env var)
+
+## Health Monitoring
+
+### Check Service Health
+```bash
+# Overall status
+docker compose ps
+
+# Service logs
+docker compose logs --tail=100 -f [service_name]
+
+# Ollama health
+curl http://localhost:11434/api/tags
+
+# vLLM health
+curl http://localhost:8001/v1/models
+```
+
+### Common Health Issues
+- **Ollama**: May take 1-2 minutes to start
+- **vLLM**: May take up to 5 minutes for initial model loading
+- **Backend**: Check Redis and database connectivity
+
+## Production Considerations
+
+### SSL/TLS Configuration
+1. Update Nginx configuration in `nginx/conf.d/`
+2. Mount SSL certificates to Nginx container
+3. Update ports to use 443 for HTTPS
+
+### Resource Optimization
+```yaml
+# Add to docker-compose.yml for production
+deploy:
+  resources:
+    limits:
+      cpus: '2'
+      memory: 4G
+```
+
+### Monitoring
+- Use LangFuse dashboard for LLM usage tracking
+- Monitor Docker resource usage: `docker stats`
+- Set up log aggregation for production
 
 ## Troubleshooting
 
-### Common Issues
-
-1. **Database Connection Issues**
-   - Check the database credentials in the `.env` file
-   - Ensure the PostgreSQL service is running
-
-2. **Nginx Configuration**
-   - Verify the Nginx configuration in the `nginx/` directory
-   - Check Nginx logs: `docker-compose logs nginx`
-
-3. **SSL Certificate Problems**
-   - Ensure domains are correctly configured in the Certbot command
-   - Check Certbot logs: `docker-compose logs certbot`
-
-### Logs
-
-To view logs for a specific service:
-
+### Database Connection Issues
 ```bash
-docker-compose logs [service-name]
+# Test database connection
+docker compose exec backend python manage.py dbshell
+
+# Check database logs
+docker compose logs db
 ```
 
-For example:
+### Redis Connection Issues
 ```bash
-docker-compose logs backend
-docker-compose logs frontend
-``` 
+# Test Redis connection
+docker compose exec redis redis-cli ping
+
+# Check Redis logs
+docker compose logs redis
+```
+
+### AI Service Issues
+```bash
+# Restart Ollama
+docker compose restart ollama
+
+# Check Ollama models
+docker compose exec ollama ollama list
+
+# Restart vLLM
+docker compose restart vllm
+```
+
+### Frontend Build Issues
+```bash
+# Rebuild frontend
+docker compose build frontend
+
+# Check frontend logs
+docker compose logs frontend
+```
+
+## Backup and Recovery
+
+### Automated Backups
+Create a cron job for regular backups:
+```bash
+0 2 * * * cd /path/to/allsides_next_project && docker compose exec -T db pg_dump -U allsides_user allsides_db > backups/db_backup_$(date +\%Y\%m\%d).sql
+```
+
+### Backup All Data
+```bash
+# Database
+docker compose exec db pg_dump -U allsides_user allsides_db > backups/db_backup.sql
+
+# Redis
+docker compose exec redis redis-cli SAVE
+docker cp $(docker compose ps -q redis):/data/dump.rdb backups/redis_backup.rdb
+
+# Media files
+tar -czf backups/mediafiles_backup.tar.gz allsides_next/backend/mediafiles/
+```
+
+## AWS Aurora PostgreSQL Migration
+
+For AWS Aurora deployment, use the alternative configuration:
+```bash
+docker compose -f docker-compose.aurora.yml up -d
+```
+
+See [AURORA_MIGRATION_GUIDE.md](../AURORA_MIGRATION_GUIDE.md) for detailed instructions.
+
+## Maintenance
+
+### Update Application
+```bash
+# Pull latest code
+git pull origin main
+
+# Rebuild and restart
+docker compose build
+docker compose up -d
+
+# Run migrations
+docker compose exec backend python manage.py migrate
+```
+
+### Clean Up
+```bash
+# Remove unused images
+docker image prune -a
+
+# Remove unused volumes
+docker volume prune
+
+# Complete cleanup (CAUTION)
+docker system prune -a --volumes
+```
+
+## Security Best Practices
+
+1. **Environment Variables**: Never commit `.env` files
+2. **Database**: Use strong passwords, limit network exposure
+3. **API Keys**: Rotate regularly, use least privilege
+4. **Firewall**: Only expose necessary ports
+5. **Updates**: Keep Docker images updated
+
+## Support
+
+For issues and questions:
+- Check logs: `docker compose logs [service_name]`
+- Review environment variables
+- Ensure sufficient system resources
+- Consult the [troubleshooting](#troubleshooting) section
